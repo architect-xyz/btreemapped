@@ -1,0 +1,18 @@
+[package]
+authors = ["Architect Financial Technologies LLC"]
+categories = ["database", "data-structures"]
+description = "Derive macros for btreemapped"
+documentation = "https://docs.rs/btreemapped"
+edition = "2021"
+homepage = "https://www.architect.co"
+keywords = ["postgres", "database", "replication", "btreemap"]
+license = "MIT"
+name = "btreemapped_derive"
+version = "0.1.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }

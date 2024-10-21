@@ -1,0 +1,15 @@
+[package]
+authors = ["Architect Financial Technologies LLC"]
+categories = ["database", "data-structures"]
+description = "Derive macros for btreemapped"
+documentation = "https://docs.rs/btreemapped"
+edition = "2021"
+homepage = "https://www.architect.co"
+keywords = ["postgres", "database", "replication", "btreemap"]
+license = "MIT"
+name = "btreemapped"
+version = "0.1.0"
+
+[dependencies]
+anyhow = { workspace = true }
+paste = "1"
