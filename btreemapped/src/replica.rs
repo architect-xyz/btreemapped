@@ -5,9 +5,7 @@ use crate::BTreeMapped;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::{Borrow, Cow},
-    collections::{BTreeMap, HashMap, HashSet},
-    hash::Hash,
+    collections::BTreeMap,
     sync::{Arc, RwLock},
 };
 use thiserror::Error;
@@ -206,12 +204,32 @@ where
             }
         }
     }
+
+    pub fn for_range2<R, F>(&self, i0: I0, range: R, mut f: F)
+    where
+        R: std::ops::RangeBounds<I1>,
+        F: FnMut(T::Ref<'_>),
+    {
+        let start: std::ops::Bound<LIndex2<I0, I1>> = range
+            .start_bound()
+            .map(|s| LIndex2(LValue::Exact(i0.clone()), LValue::Exact(s.clone())));
+        let end: std::ops::Bound<LIndex2<I0, I1>> = range
+            .end_bound()
+            .map(|e| LIndex2(LValue::Exact(i0.clone()), LValue::Exact(e.clone())));
+        let replica = self.replica.read().unwrap();
+        for (k, v) in replica.range((start, end)) {
+            if let Some(t) = T::kv_as_ref(k, v) {
+                f(t);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use btreemapped_derive::BTreeMapped;
+    use std::borrow::Cow;
 
     #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["owner", "license_plate"])]
@@ -241,29 +259,30 @@ mod tests {
         replica.insert(Car::new("Bob", 888, "def"));
         replica.insert(Car::new("Charlie", 1002, "ghi"));
         replica.insert(Car::new("Charlie", 1003, "ghi"));
-        // let r = replica.replica.read().unwrap();
-        // let beg = LIndex2(LValue::Exact(Cow::Borrowed("Alice")), LValue::NegInfinity);
-        // let end = LIndex2(LValue::Exact(Cow::Borrowed("Bob")), LValue::Infinity);
-        // let beg = LIndex2::<str, i64>(LValue::Exact(Cow::Borrowed("Alice")), LValue::NegInfinity);
-        // let end = LIndex2::<str, i64>(
-        //     LValue::Exact(Cow::Owned("Bob".to_string())),
-        //     LValue::Infinity,
-        // );
-        // for (k, v) in r.range(beg..=end) {
-        //     println!("{:?}", k);
-        // }
-        let x: Cow<'_, str> = "Alice".into();
-        match x {
-            Cow::Owned(..) => panic!("should not happen"),
-            _ => (),
-        };
-        let mut iteration = vec![];
+        let mut io = vec![];
         replica.for_range1(Cow::Borrowed("Alice")..=Cow::Borrowed("Bob"), |car| {
-            iteration.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
+            io.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
+        });
+        assert_eq!(io, vec!["Alice 123 abc", "Bob 456 def", "Bob 888 def"]);
+        let mut io2 = vec![];
+        replica.for_range2(Cow::Borrowed("Alice"), 1000..=1002, |car| {
+            io2.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
+        });
+        assert_eq!(io2, Vec::<String>::new());
+        let mut io3 = vec![];
+        replica.for_range2(Cow::Borrowed("Bob"), 456..=1003, |car| {
+            io3.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
+        });
+        assert_eq!(io3, vec!["Bob 456 def", "Bob 888 def"]);
+        let mut io4 = vec![];
+        replica.for_range2(Cow::Borrowed("Charlie"), 1000..1003, |car| {
+            io4.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
         assert_eq!(
-            iteration,
-            vec!["Alice 123 abc", "Bob 456 def", "Bob 888 def"]
+            io4,
+            vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]
         );
     }
 }
+
+// TODO: consider https://github.com/boustrophedon/pgtemp for integration testing
