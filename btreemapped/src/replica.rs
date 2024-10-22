@@ -181,6 +181,7 @@ impl<T: BTreeMapped> std::ops::Deref for BTreeMapReplica<T> {
 impl<T, I0, I1> BTreeMapReplica<T>
 where
     T: BTreeMapped<LIndex = LIndex2<I0, I1>>,
+    // TODO: possibly relaxable
     I0: Clone + Ord + 'static,
     I1: Clone + Ord + 'static,
 {
@@ -251,6 +252,11 @@ mod tests {
         // for (k, v) in r.range(beg..=end) {
         //     println!("{:?}", k);
         // }
+        let x: Cow<'_, str> = "Alice".into();
+        match x {
+            Cow::Owned(..) => panic!("should not happen"),
+            _ => (),
+        };
         let mut iteration = vec![];
         replica.for_range1(Cow::Borrowed("Alice")..=Cow::Borrowed("Bob"), |car| {
             iteration.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
