@@ -33,15 +33,20 @@ impl<'a, T: std::fmt::Display> std::fmt::Display for LValue<T> {
     }
 }
 
+/// Marker traits for LIndex arity
+pub trait HasArity<const N: usize> {}
+
 // NB alee: tuples are always foreign, so we need to wrap them in a struct
 // in order to define trait implementations for them.  We call this struct,
 // which wraps a tuple of LValues, an LIndex.
 macro_rules! lindex {
-    ($name:ident, $($I:ident),+) => {
+    ($name:ident, N = $n:literal, $($I:ident),+) => {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name<$($I),+>($(pub LValue<$I>,)+);
 
         paste::paste! {
+            impl<$($I),+> HasArity<$n> for $name<$($I),+> {}
+
             impl<$($I),+> From<($($I,)+)> for $name<$($I),+> {
                 fn from(($([<$I:lower>],)+): ($($I,)+)) -> Self {
                     $name($(LValue::Exact([<$I:lower>]),)+)
@@ -68,7 +73,7 @@ macro_rules! lindex {
     };
 }
 
-lindex!(LIndex2, I0, I1);
-lindex!(LIndex3, I0, I1, I2);
-lindex!(LIndex4, I0, I1, I2, I3);
-lindex!(LIndex5, I0, I1, I2, I3, I4);
+lindex!(LIndex2, N = 2, I0, I1);
+lindex!(LIndex3, N = 3, I0, I1, I2);
+lindex!(LIndex4, N = 4, I0, I1, I2, I3);
+lindex!(LIndex5, N = 5, I0, I1, I2, I3, I4);

@@ -1,7 +1,7 @@
 //! Concrete replica of a database table in memory as a BTreeMap.
 
-use crate::lvalue::*;
-use crate::BTreeMapped;
+use crate::{lvalue::*, BTreeMapped};
+use btreemapped_derive::impl_for_range;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,7 +12,7 @@ use thiserror::Error;
 use tokio::sync::{broadcast, Notify};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BTreeSnapshot<T: BTreeMapped> {
+pub struct BTreeSnapshot<T: BTreeMapped<N>, const N: usize> {
     pub epoch: DateTime<Utc>,
     pub seqno: u64,
     // NB: BTreeMap<K, V> isn't representable in JSON for complex K,
@@ -21,7 +21,7 @@ pub struct BTreeSnapshot<T: BTreeMapped> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BTreeUpdate<T: BTreeMapped> {
+pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
     pub epoch: DateTime<Utc>,
     pub seqno: u64,
     // if snapshot is provided, always use it, then apply updates
@@ -52,11 +52,12 @@ impl<T> std::ops::DerefMut for Sequenced<T> {
     }
 }
 
+// NB alee: a bit unfortunate that we have to specify the INDEX_ARITY here
 #[derive(Debug, Clone)]
-pub struct BTreeMapReplica<T: BTreeMapped> {
+pub struct BTreeMapReplica<T: BTreeMapped<N>, const N: usize> {
     pub replica: Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T::Unindexed>>>>,
     pub changed: Arc<Notify>,
-    pub updates: broadcast::Sender<Arc<BTreeUpdate<T>>>,
+    pub updates: broadcast::Sender<Arc<BTreeUpdate<T, N>>>,
 }
 
 #[derive(Debug, Error)]
@@ -67,7 +68,7 @@ pub enum BTreeMapSyncError {
     SeqnoSkip,
 }
 
-impl<T: BTreeMapped> BTreeMapReplica<T> {
+impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     pub fn new() -> Self {
         let (updates, _) = broadcast::channel(100);
         Self {
@@ -93,7 +94,7 @@ impl<T: BTreeMapped> BTreeMapReplica<T> {
         replica.epoch = epoch;
     }
 
-    pub fn snapshot(&self) -> BTreeSnapshot<T> {
+    pub fn snapshot(&self) -> BTreeSnapshot<T, N> {
         let replica = self.replica.read().unwrap();
         let mut snapshot = vec![];
         for (k, v) in replica.iter() {
@@ -101,14 +102,10 @@ impl<T: BTreeMapped> BTreeMapReplica<T> {
             let u = v.clone();
             snapshot.push((i, u));
         }
-        BTreeSnapshot {
-            epoch: replica.epoch,
-            seqno: replica.seqno,
-            snapshot,
-        }
+        BTreeSnapshot { epoch: replica.epoch, seqno: replica.seqno, snapshot }
     }
 
-    pub fn apply_snapshot(&mut self, snap: BTreeSnapshot<T>) -> (DateTime<Utc>, u64) {
+    pub fn apply_snapshot(&mut self, snap: BTreeSnapshot<T, N>) -> (DateTime<Utc>, u64) {
         let mut replica = self.replica.write().unwrap();
         replica.clear();
         for (i, u) in snap.snapshot.iter() {
@@ -122,7 +119,7 @@ impl<T: BTreeMapped> BTreeMapReplica<T> {
 
     pub fn apply_update(
         &mut self,
-        up: BTreeUpdate<T>,
+        up: BTreeUpdate<T, N>,
     ) -> Result<(DateTime<Utc>, u64), BTreeMapSyncError> {
         let mut replica = self.replica.write().unwrap();
         if let Some(snapshot) = up.snapshot.as_ref() {
@@ -167,7 +164,7 @@ impl<T: BTreeMapped> BTreeMapReplica<T> {
     }
 }
 
-impl<T: BTreeMapped> std::ops::Deref for BTreeMapReplica<T> {
+impl<T: BTreeMapped<N>, const N: usize> std::ops::Deref for BTreeMapReplica<T, N> {
     type Target = Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T::Unindexed>>>>;
 
     fn deref(&self) -> &Self::Target {
@@ -175,55 +172,11 @@ impl<T: BTreeMapped> std::ops::Deref for BTreeMapReplica<T> {
     }
 }
 
-// CR alee: consider the trick in https://stackoverflow.com/questions/45786717/how-to-get-value-from-hashmap-with-two-keys-via-references-to-both-keys
-impl<T, I0, I1> BTreeMapReplica<T>
-where
-    T: BTreeMapped<LIndex = LIndex2<I0, I1>>,
-    // TODO: possibly relaxable
-    I0: Clone + Ord + 'static,
-    I1: Clone + Ord + 'static,
-{
-    // NB: returning a mapped iterator not really possible given lifetime
-    // constraints, so we expose for_rangeN() functions instead.
-    pub fn for_range1<R, F>(&self, range: R, mut f: F)
-    where
-        R: std::ops::RangeBounds<I0>,
-        F: FnMut(T::Ref<'_>),
-    {
-        // TODO: how do we get a str out here...it seems so close...
-        let start: std::ops::Bound<LIndex2<I0, I1>> = range
-            .start_bound()
-            .map(|s| LIndex2(LValue::Exact(s.clone()), LValue::NegInfinity));
-        let end: std::ops::Bound<LIndex2<I0, I1>> = range
-            .end_bound()
-            .map(|e| LIndex2(LValue::Exact(e.clone()), LValue::Infinity));
-        let replica = self.replica.read().unwrap();
-        for (k, v) in replica.range((start, end)) {
-            if let Some(t) = T::kv_as_ref(k, v) {
-                f(t);
-            }
-        }
-    }
+impl_for_range!(LIndex2<I0, I1>);
+impl_for_range!(LIndex3<I0, I1, I2>);
+impl_for_range!(LIndex4<I0, I1, I2, I3>);
 
-    pub fn for_range2<R, F>(&self, i0: I0, range: R, mut f: F)
-    where
-        R: std::ops::RangeBounds<I1>,
-        F: FnMut(T::Ref<'_>),
-    {
-        let start: std::ops::Bound<LIndex2<I0, I1>> = range
-            .start_bound()
-            .map(|s| LIndex2(LValue::Exact(i0.clone()), LValue::Exact(s.clone())));
-        let end: std::ops::Bound<LIndex2<I0, I1>> = range
-            .end_bound()
-            .map(|e| LIndex2(LValue::Exact(i0.clone()), LValue::Exact(e.clone())));
-        let replica = self.replica.read().unwrap();
-        for (k, v) in replica.range((start, end)) {
-            if let Some(t) = T::kv_as_ref(k, v) {
-                f(t);
-            }
-        }
-    }
-}
+// CR alee: consider the trick in https://stackoverflow.com/questions/45786717/how-to-get-value-from-hashmap-with-two-keys-via-references-to-both-keys
 
 #[cfg(test)]
 mod tests {
@@ -251,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_btreemap_replica2() {
-        let mut replica: BTreeMapReplica<Car> = BTreeMapReplica::new();
+        let mut replica: BTreeMapReplica<Car, 2> = BTreeMapReplica::new();
         replica.insert(Car::new("Alice", 123, "abc"));
         replica.insert(Car::new("Charlie", 1000, "ghi"));
         replica.insert(Car::new("Charlie", 1001, "ghi"));
@@ -278,10 +231,7 @@ mod tests {
         replica.for_range2(Cow::Borrowed("Charlie"), 1000..1003, |car| {
             io4.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
-        assert_eq!(
-            io4,
-            vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]
-        );
+        assert_eq!(io4, vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]);
     }
 }
 

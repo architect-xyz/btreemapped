@@ -9,11 +9,19 @@ pub mod sink;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::BTreeMapped;
+pub use lvalue::HasArity;
 pub use replica::{BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate};
 
-pub trait BTreeMapped: Clone + 'static {
+pub trait BTreeMapped<const N: usize>: Clone + 'static {
     type Ref<'a>;
-    type LIndex: std::fmt::Debug + Eq + Ord + std::hash::Hash + Send + Sync + 'static;
+    type LIndex: HasArity<N>
+        + std::fmt::Debug
+        + Eq
+        + Ord
+        + std::hash::Hash
+        + Send
+        + Sync
+        + 'static;
     type Index: Into<Self::LIndex>
         + for<'a> TryFrom<&'a Self::LIndex>
         + Clone
@@ -22,7 +30,12 @@ pub trait BTreeMapped: Clone + 'static {
         + Send
         + Sync
         + 'static;
-    type Unindexed: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static;
+    type Unindexed: Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Send
+        + Sync
+        + 'static;
 
     fn into_kv(self) -> (Self::Index, Self::Unindexed);
 

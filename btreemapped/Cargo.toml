@@ -11,18 +11,15 @@ name = "btreemapped"
 version = "0.1.0"
 
 [features]
-derive = ["btreemapped_derive"]
+derive = []
 
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-btreemapped_derive = { version = "0.1.0", path = "../btreemapped_derive", optional = true }
+btreemapped_derive = { version = "0.1.0", path = "../btreemapped_derive" }
 chrono = { workspace = true }
 paste = { workspace = true }
 pg_replicate = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-
-[dev-dependencies]
-btreemapped_derive = { version = "0.1.0", path = "../btreemapped_derive" }

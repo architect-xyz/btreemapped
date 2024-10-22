@@ -17,8 +17,8 @@ use std::{
     sync::Arc,
 };
 
-pub struct BTreeMapSink<T: BTreeMapped> {
-    pub replica: BTreeMapReplica<T>,
+pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
+    pub replica: BTreeMapReplica<T, N>,
     committed_tables: HashSet<TableId>,
     committed_lsn: PgLsn,
     txn_lsn: Option<PgLsn>,
@@ -28,7 +28,7 @@ pub struct BTreeMapSink<T: BTreeMapped> {
     table_schema: Option<TableSchema>,
 }
 
-impl<T: BTreeMapped> BTreeMapSink<T> {
+impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
     pub fn new(epoch: DateTime<Utc>, table_name: &str) -> Self {
         let mut replica = BTreeMapReplica::new();
         replica.set_epoch(epoch);
@@ -47,8 +47,10 @@ impl<T: BTreeMapped> BTreeMapSink<T> {
 
 // CR alee: implement BatchSink
 #[async_trait]
-impl<T: BTreeMapped> Sink for BTreeMapSink<T> {
-    async fn get_resumption_state(&mut self) -> Result<PipelineResumptionState, SinkError> {
+impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
+    async fn get_resumption_state(
+        &mut self,
+    ) -> Result<PipelineResumptionState, SinkError> {
         Ok(PipelineResumptionState {
             copied_tables: self.committed_tables.clone(),
             last_lsn: self.committed_lsn,
@@ -68,7 +70,11 @@ impl<T: BTreeMapped> Sink for BTreeMapSink<T> {
         Ok(())
     }
 
-    async fn write_table_row(&mut self, row: TableRow, table_id: TableId) -> Result<(), SinkError> {
+    async fn write_table_row(
+        &mut self,
+        row: TableRow,
+        table_id: TableId,
+    ) -> Result<(), SinkError> {
         if self.table_id.is_some_and(|id| id == table_id) {
             let schema = self.table_schema.as_ref().unwrap();
             if let (Some(index), Some(unindexed)) = T::parse_row(schema, row) {
@@ -147,12 +153,7 @@ impl<T: BTreeMapped> Sink for BTreeMapSink<T> {
                     }
                 }
             }
-            CdcEvent::Update {
-                table_id,
-                old_row: _,
-                key_row,
-                row,
-            } => {
+            CdcEvent::Update { table_id, old_row: _, key_row, row } => {
                 if self.table_id.is_some_and(|id| id == table_id) {
                     let schema = self.table_schema.as_ref().unwrap();
                     if let Some(key) = key_row {
