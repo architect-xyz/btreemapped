@@ -40,34 +40,35 @@ macro_rules! lindex {
     ($name:ident, $($I:ident),+) => {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name<$($I),+>($(pub LValue<$I>,)+);
-    }
+
+        paste::paste! {
+            impl<$($I),+> From<($($I,)+)> for $name<$($I),+> {
+                fn from(($([<$I:lower>],)+): ($($I,)+)) -> Self {
+                    $name($(LValue::Exact([<$I:lower>]),)+)
+                }
+            }
+
+            impl<'a, $($I),+> TryFrom<&'a $name<$($I),+>> for ($($I,)+)
+            where
+                $($I: Clone),+
+            {
+                type Error = anyhow::Error;
+
+                fn try_from(value: &'a $name<$($I),+>) -> Result<Self, Self::Error> {
+                    let $name($([<$I:lower>]),+) = value;
+                    Ok(($(
+                        [<$I:lower>]
+                            .exact()
+                            .ok_or_else(|| anyhow::anyhow!("incomplete LIndex"))?
+                            .clone(),
+                    )+))
+                }
+            }
+        }
+    };
 }
 
 lindex!(LIndex2, I0, I1);
 lindex!(LIndex3, I0, I1, I2);
 lindex!(LIndex4, I0, I1, I2, I3);
 lindex!(LIndex5, I0, I1, I2, I3, I4);
-
-// TODO: put these in the macro
-
-impl<I0, I1> From<(I0, I1)> for LIndex2<I0, I1> {
-    fn from(value: (I0, I1)) -> Self {
-        LIndex2(LValue::Exact(value.0), LValue::Exact(value.1))
-    }
-}
-
-impl<'a, I0, I1> TryFrom<&'a LIndex2<I0, I1>> for (I0, I1)
-where
-    I0: Clone,
-    I1: Clone,
-{
-    type Error = anyhow::Error;
-
-    fn try_from(value: &'a LIndex2<I0, I1>) -> Result<Self, Self::Error> {
-        // TODO: no unwrap
-        Ok((
-            value.0.exact().unwrap().clone(),
-            value.1.exact().unwrap().clone(),
-        ))
-    }
-}
