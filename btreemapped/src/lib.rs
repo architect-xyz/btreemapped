@@ -1,1 +1,38 @@
-pub mod lindex;
+//! How does Postgres logical replication work for tables with b-tree
+//! primary key indexes?
+//!
+//! TODO: fill out prose documentation here
+
+pub mod lvalue;
+pub mod replica;
+pub mod sink;
+
+#[cfg(feature = "derive")]
+pub use btreemapped_derive::BTreeMapped;
+pub use replica::{BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate};
+
+pub trait BTreeMapped: Clone + 'static {
+    type Ref<'a>;
+    type LIndex: std::fmt::Debug + Eq + Ord + std::hash::Hash + Send + Sync + 'static;
+    type Index: Into<Self::LIndex>
+        + for<'a> TryFrom<&'a Self::LIndex>
+        + Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Send
+        + Sync
+        + 'static;
+    type Unindexed: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static;
+
+    fn into_kv(self) -> (Self::Index, Self::Unindexed);
+
+    fn kv_as_ref<'a>(
+        index: &'a Self::LIndex,
+        unindexed: &'a Self::Unindexed,
+    ) -> Option<Self::Ref<'a>>;
+
+    fn parse_row(
+        schema: &pg_replicate::table::TableSchema,
+        row: pg_replicate::conversions::table_row::TableRow,
+    ) -> (Option<Self::Index>, Option<Self::Unindexed>);
+}
