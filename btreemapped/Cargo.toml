@@ -1,7 +1,7 @@
 [package]
 authors = ["Architect Financial Technologies LLC"]
 categories = ["database", "data-structures"]
-description = "Derive macros for btreemapped"
+description = "BTreeMap-based Postgres replication"
 documentation = "https://docs.rs/btreemapped"
 edition = "2021"
 homepage = "https://www.architect.co"
