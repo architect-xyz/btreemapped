@@ -19,7 +19,7 @@ pub struct BTreeSnapshot<T: BTreeMapped> {
     pub seqno: u64,
     // NB: BTreeMap<K, V> isn't representable in JSON for complex K,
     // so we deliver Vec<(K, V)> instead.
-    pub snapshot: Arc<Vec<(T::Index, T::Unindexed)>>,
+    pub snapshot: Vec<(T::Index, T::Unindexed)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,9 +28,9 @@ pub struct BTreeUpdate<T: BTreeMapped> {
     pub seqno: u64,
     // if snapshot is provided, always use it, then apply updates
     // as normal; server may supply a snapshot at any time
-    pub snapshot: Option<Arc<Vec<(T::Index, T::Unindexed)>>>,
+    pub snapshot: Option<Vec<(T::Index, T::Unindexed)>>,
     // semantics of updates are (K, None) for delete, (K, Some(V)) for insert/update
-    pub updates: Arc<Vec<(T::Index, Option<T::Unindexed>)>>,
+    pub updates: Vec<(T::Index, Option<T::Unindexed>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +58,7 @@ impl<T> std::ops::DerefMut for Sequenced<T> {
 pub struct BTreeMapReplica<T: BTreeMapped> {
     pub replica: Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T::Unindexed>>>>,
     pub changed: Arc<Notify>,
-    pub updates: broadcast::Sender<BTreeUpdate<T>>,
+    pub updates: broadcast::Sender<Arc<BTreeUpdate<T>>>,
 }
 
 #[derive(Debug, Error)]
@@ -106,7 +106,7 @@ impl<T: BTreeMapped> BTreeMapReplica<T> {
         BTreeSnapshot {
             epoch: replica.epoch,
             seqno: replica.seqno,
-            snapshot: Arc::new(snapshot),
+            snapshot,
         }
     }
 

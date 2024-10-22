@@ -79,12 +79,12 @@ impl<T: BTreeMapped> Sink for BTreeMapSink<T> {
                     (replica.epoch, replica.seqno)
                 };
                 self.replica.changed.notify_waiters();
-                if let Err(_) = self.replica.updates.send(BTreeUpdate {
+                if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
                     epoch,
                     seqno,
                     snapshot: None,
-                    updates: Arc::new(vec![(index, Some(unindexed))]),
-                }) {
+                    updates: vec![(index, Some(unindexed))],
+                })) {
                     // nobody listening, fine
                 }
             } else {
@@ -124,12 +124,12 @@ impl<T: BTreeMapped> Sink for BTreeMapSink<T> {
                         };
                         self.committed_lsn = commit_lsn;
                         self.replica.changed.notify_waiters();
-                        if let Err(_) = self.replica.updates.send(BTreeUpdate {
+                        if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
                             epoch,
                             seqno,
                             snapshot: None,
-                            updates: Arc::new(updates),
-                        }) {
+                            updates,
+                        })) {
                             // nobody listening, fine
                         }
                     } else {
@@ -193,12 +193,12 @@ impl<T: BTreeMapped> Sink for BTreeMapSink<T> {
                 (replica.epoch, replica.seqno)
             };
             self.replica.changed.notify_waiters();
-            if let Err(_) = self.replica.updates.send(BTreeUpdate {
+            if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
                 epoch,
                 seqno,
-                snapshot: Some(Arc::new(vec![])),
-                updates: Arc::new(vec![]),
-            }) {
+                snapshot: Some(vec![]),
+                updates: vec![],
+            })) {
                 // nobody listening, fine
             }
         }
