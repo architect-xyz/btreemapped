@@ -177,39 +177,33 @@ impl<T: BTreeMapped> std::ops::Deref for BTreeMapReplica<T> {
     }
 }
 
+// CR alee: consider the trick in https://stackoverflow.com/questions/45786717/how-to-get-value-from-hashmap-with-two-keys-via-references-to-both-keys
 impl<T, I0, I1> BTreeMapReplica<T>
 where
-    T: BTreeMapped<LIndex = LIndex2<'static, I0, I1>>,
+    T: BTreeMapped<LIndex = LIndex2<I0, I1>>,
     I0: Clone + Ord + 'static,
     I1: Clone + Ord + 'static,
 {
     // NB: returning a mapped iterator not really possible given lifetime
     // constraints, so we expose for_rangeN() functions instead.
-    pub fn for_range1<'a, R, F, K0>(&self, range: R, mut f: F)
+    pub fn for_range1<R, F>(&self, range: R, mut f: F)
     where
-        R: std::ops::RangeBounds<K0> + 'a,
-        I0: Borrow<K0> + 'a,
-        K0: Clone,
-        F: FnMut(T::Ref<'a>),
+        R: std::ops::RangeBounds<I0>,
+        F: FnMut(T::Ref<'_>),
     {
-        // CR alee: don't clone here, there must be some Borrow<> impl
-        // that lets us use LIndex2 bounds as an iterator
-        // let start: std::ops::Bound<&'a LIndex2<'a, I0, I1>> = range.start_bound().map(|s| {
-        //     LIndex2(
-        //         LValue::Exact(Cow::Borrowed(s.borrow())),
-        //         LValue::NegInfinity,
-        //     )
-        // });
-        // let end: std::ops::Bound<LIndex2<'a, I0, I1>> = range
-        //     .end_bound()
-        //     .map(|e| (LValue::Exact(Cow::Borrowed(e.borrow())), LValue::Infinity));
-        // let replica = self.replica.read().unwrap();
-        // for (k, v) in replica.range((start, end)) {
-        //     if let Some(t) = T::kv_as_ref(k, v) {
-        //         f(t);
-        //     }
-        // }
-        todo!()
+        // TODO: how do we get a str out here...it seems so close...
+        let start: std::ops::Bound<LIndex2<I0, I1>> = range
+            .start_bound()
+            .map(|s| LIndex2(LValue::Exact(s.clone()), LValue::NegInfinity));
+        let end: std::ops::Bound<LIndex2<I0, I1>> = range
+            .end_bound()
+            .map(|e| LIndex2(LValue::Exact(e.clone()), LValue::Infinity));
+        let replica = self.replica.read().unwrap();
+        for (k, v) in replica.range((start, end)) {
+            if let Some(t) = T::kv_as_ref(k, v) {
+                f(t);
+            }
+        }
     }
 }
 
@@ -221,7 +215,7 @@ mod tests {
     #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["owner", "license_plate"])]
     struct Car {
-        owner: String,
+        owner: Cow<'static, str>,
         license_plate: i64,
         key: String,
     }
@@ -229,7 +223,7 @@ mod tests {
     impl Car {
         fn new(owner: &str, license_plate: i64, key: &str) -> Self {
             Self {
-                owner: owner.to_string(),
+                owner: Cow::Owned(owner.to_string()),
                 license_plate,
                 key: key.to_string(),
             }
@@ -246,20 +240,24 @@ mod tests {
         replica.insert(Car::new("Bob", 888, "def"));
         replica.insert(Car::new("Charlie", 1002, "ghi"));
         replica.insert(Car::new("Charlie", 1003, "ghi"));
-        let r = replica.replica.read().unwrap();
+        // let r = replica.replica.read().unwrap();
         // let beg = LIndex2(LValue::Exact(Cow::Borrowed("Alice")), LValue::NegInfinity);
         // let end = LIndex2(LValue::Exact(Cow::Borrowed("Bob")), LValue::Infinity);
-        let beg = LIndex2::<str, i64>(LValue::Exact(Cow::Borrowed("Alice")), LValue::NegInfinity);
-        let end = LIndex2::<str, i64>(
-            LValue::Exact(Cow::Owned("Bob".to_string())),
-            LValue::Infinity,
+        // let beg = LIndex2::<str, i64>(LValue::Exact(Cow::Borrowed("Alice")), LValue::NegInfinity);
+        // let end = LIndex2::<str, i64>(
+        //     LValue::Exact(Cow::Owned("Bob".to_string())),
+        //     LValue::Infinity,
+        // );
+        // for (k, v) in r.range(beg..=end) {
+        //     println!("{:?}", k);
+        // }
+        let mut iteration = vec![];
+        replica.for_range1(Cow::Borrowed("Alice")..=Cow::Borrowed("Bob"), |car| {
+            iteration.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
+        });
+        assert_eq!(
+            iteration,
+            vec!["Alice 123 abc", "Bob 456 def", "Bob 888 def"]
         );
-        for (k, v) in r.range(beg..=end) {
-            println!("{:?}", k);
-        }
-        // replica.for_range1("Alice"..="Bob", |car| {
-        //     println!("{:?}", car);
-        // });
-        assert!(false);
     }
 }

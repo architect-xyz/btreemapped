@@ -4,50 +4,26 @@
 //! to express the bounds on each tuple element respectively.  The user can
 //! iterate over the BTreeMap as usual and use `LValue<T>`s as comparators.
 
-use anyhow::anyhow;
-use std::borrow::{Borrow, Cow};
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LValue<'a, T: ToOwned + ?Sized> {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LValue<T> {
     /// Less than any/all T
     NegInfinity,
     /// Exactly T
-    Exact(Cow<'a, T>),
+    Exact(T),
     /// Greater than any/all T
     Infinity,
 }
 
-impl<'a, T: ToOwned + ?Sized> LValue<'a, T> {
+impl<T> LValue<T> {
     pub fn exact(&self) -> Option<&T> {
         match self {
             LValue::Exact(t) => Some(t),
             _ => None,
         }
     }
-
-    pub fn into_exact(self) -> Option<T::Owned> {
-        match self {
-            LValue::Exact(t) => Some(t.into_owned()),
-            _ => None,
-        }
-    }
 }
 
-impl<'a, T> std::fmt::Debug for LValue<'a, T>
-where
-    T: std::fmt::Debug + ToOwned,
-    <T as ToOwned>::Owned: std::fmt::Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LValue::NegInfinity => write!(f, "NegInfinity"),
-            LValue::Exact(t) => write!(f, "Exact({t:?})"),
-            LValue::Infinity => write!(f, "Infinity"),
-        }
-    }
-}
-
-impl<'a, T: ToOwned + std::fmt::Display> std::fmt::Display for LValue<'a, T> {
+impl<'a, T: std::fmt::Display> std::fmt::Display for LValue<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LValue::NegInfinity => write!(f, "-∞"),
@@ -62,14 +38,8 @@ impl<'a, T: ToOwned + std::fmt::Display> std::fmt::Display for LValue<'a, T> {
 // which wraps a tuple of LValues, an LIndex.
 macro_rules! lindex {
     ($name:ident, $($I:ident),+) => {
-        #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name<'a, $($I: ToOwned + ?Sized),+>($(pub LValue<'a, $I>,)+);
-
-        impl<'a, $($I: ToOwned + ?Sized),+> std::fmt::Debug for $name<'a, $($I),+> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{:?}", self)
-            }
-        }
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name<$($I),+>($(pub LValue<$I>,)+);
     }
 }
 
@@ -80,46 +50,24 @@ lindex!(LIndex5, I0, I1, I2, I3, I4);
 
 // TODO: put these in the macro
 
-impl<I0, I1, J0, J1> From<(J0, J1)> for LIndex2<'static, I0, I1>
-where
-    I0: ToOwned + ?Sized,
-    I1: ToOwned + ?Sized,
-    <I0 as ToOwned>::Owned: From<J0>,
-    <I1 as ToOwned>::Owned: From<J1>,
-{
-    fn from(value: (J0, J1)) -> Self {
-        LIndex2(
-            LValue::Exact(Cow::Owned(value.0.into())),
-            LValue::Exact(Cow::Owned(value.1.into())),
-        )
+impl<I0, I1> From<(I0, I1)> for LIndex2<I0, I1> {
+    fn from(value: (I0, I1)) -> Self {
+        LIndex2(LValue::Exact(value.0), LValue::Exact(value.1))
     }
 }
 
-impl<'a, I0, I1, J0, J1> TryFrom<&'a LIndex2<'static, I0, I1>> for (J0, J1)
+impl<'a, I0, I1> TryFrom<&'a LIndex2<I0, I1>> for (I0, I1)
 where
-    I0: ToOwned<Owned = J0> + Clone,
-    I1: ToOwned<Owned = J1> + Clone,
+    I0: Clone,
+    I1: Clone,
 {
     type Error = anyhow::Error;
 
-    fn try_from(value: &'a LIndex2<'static, I0, I1>) -> Result<Self, Self::Error> {
-        let i0 = value
-            .0
-            .exact()
-            .ok_or_else(|| anyhow!("incomplete LIndex2"))?;
-        let i1 = value
-            .1
-            .exact()
-            .ok_or_else(|| anyhow!("incomplete LIndex2"))?;
-        Ok((i0.to_owned(), i1.to_owned()))
+    fn try_from(value: &'a LIndex2<I0, I1>) -> Result<Self, Self::Error> {
+        // TODO: no unwrap
+        Ok((
+            value.0.exact().unwrap().clone(),
+            value.1.exact().unwrap().clone(),
+        ))
     }
 }
-
-// impl<I0: Clone, I1: Clone> From<(I0, I1)> for LIndex2<'static, I0, I1> {
-//     fn from(value: (I0, I1)) -> Self {
-//         (
-//             LValue::Exact(Cow::Owned(value.0)),
-//             LValue::Exact(Cow::Owned(value.1)),
-//         )
-//     }
-// }

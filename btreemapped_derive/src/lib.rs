@@ -78,11 +78,11 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
         let (ident, ty) = index_fields_by_name.remove(name).unwrap();
         index_fields.push((ident, ty.clone()));
         index_field_types.push(ty.clone());
-        if is_string_type(&ty) {
-            lindex_field_types.push(Type::Verbatim(quote!(str)));
-        } else {
-            lindex_field_types.push(ty);
-        }
+        // if is_string_type(&ty) {
+        //     lindex_field_types.push(Type::Verbatim(quote!(std::borrow::Cow<'static, str>)));
+        // } else {
+        lindex_field_types.push(ty);
+        // }
     }
 
     // Generate the index tuple constructor for into_kv
@@ -135,7 +135,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     // Determine the number of index fields to select appropriate LIndexN
     let index_len = index_fields.len();
     let lindex_ident = format_ident!("LIndex{}", index_len);
-    let lindex_type = quote! { #lindex_ident<'static, #(#lindex_field_types),*> };
+    let lindex_type = quote! { #lindex_ident<#(#lindex_field_types),*> };
 
     // Generate the Index type tuple
     let index_tuple = if index_fields.len() == 1 {
