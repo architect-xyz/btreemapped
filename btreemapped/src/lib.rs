@@ -9,7 +9,7 @@ pub mod sink;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::BTreeMapped;
-pub use lvalue::HasArity;
+pub use lvalue::*;
 pub use replica::{BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate};
 
 pub trait BTreeMapped<const N: usize>: Clone + 'static {
