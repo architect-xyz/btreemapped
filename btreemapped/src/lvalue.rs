@@ -73,6 +73,7 @@ macro_rules! lindex {
     };
 }
 
+lindex!(LIndex1, N = 1, I0);
 lindex!(LIndex2, N = 2, I0, I1);
 lindex!(LIndex3, N = 3, I0, I1, I2);
 lindex!(LIndex4, N = 4, I0, I1, I2, I3);

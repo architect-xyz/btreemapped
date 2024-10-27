@@ -172,6 +172,7 @@ impl<T: BTreeMapped<N>, const N: usize> std::ops::Deref for BTreeMapReplica<T, N
     }
 }
 
+impl_for_range!(LIndex1<I0>);
 impl_for_range!(LIndex2<I0, I1>);
 impl_for_range!(LIndex3<I0, I1, I2>);
 impl_for_range!(LIndex4<I0, I1, I2, I3>);
@@ -183,6 +184,32 @@ mod tests {
     use super::*;
     use btreemapped_derive::BTreeMapped;
     use std::borrow::Cow;
+
+    #[derive(Debug, Clone, BTreeMapped)]
+    #[btreemap(index = ["key"])]
+    struct Foo {
+        key: Cow<'static, str>,
+        bar: Option<DateTime<Utc>>,
+    }
+
+    impl Foo {
+        fn new(key: &str, bar: Option<DateTime<Utc>>) -> Self {
+            Self { key: Cow::Owned(key.to_string()), bar }
+        }
+    }
+
+    #[test]
+    fn test_btreemap_replica1() {
+        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        replica.insert(Foo::new("abc", None));
+        replica.insert(Foo::new("def", Some("2024-03-01T00:30:44Z".parse().unwrap())));
+        replica.insert(Foo::new("ghi", None));
+        let mut io = vec![];
+        replica.for_range1(Cow::Borrowed("abc")..=Cow::Borrowed("ghi"), |foo| {
+            io.push(format!("{} {:?}", foo.key, foo.bar));
+        });
+        assert_eq!(io, vec!["abc None", "def Some(2024-03-01T00:30:44Z)", "ghi None"]);
+    }
 
     #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["owner", "license_plate"])]
