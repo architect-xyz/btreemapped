@@ -188,13 +188,13 @@ mod tests {
     #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["key"])]
     struct Foo {
-        key: Cow<'static, str>,
+        key: String,
         bar: Option<DateTime<Utc>>,
     }
 
     impl Foo {
         fn new(key: &str, bar: Option<DateTime<Utc>>) -> Self {
-            Self { key: Cow::Owned(key.to_string()), bar }
+            Self { key: key.to_string(), bar }
         }
     }
 
@@ -205,7 +205,7 @@ mod tests {
         replica.insert(Foo::new("def", Some("2024-03-01T00:30:44Z".parse().unwrap())));
         replica.insert(Foo::new("ghi", None));
         let mut io = vec![];
-        replica.for_range1(Cow::Borrowed("abc")..=Cow::Borrowed("ghi"), |foo| {
+        replica.for_range1("abc".to_string()..="ghi".to_string(), |foo| {
             io.push(format!("{} {:?}", foo.key, foo.bar));
         });
         assert_eq!(io, vec!["abc None", "def Some(2024-03-01T00:30:44Z)", "ghi None"]);
