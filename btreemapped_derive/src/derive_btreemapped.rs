@@ -188,9 +188,9 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                     quote! {
                         #name_str => {
                             let _i = TryInto::<String>::try_into(v)
-                                .with_context(|| format!("while converting to String: {}", #name_str))?;
+                                .with_context(|| format!("while converting column {} to String", #name_str))?;
                             #name = Some(
-                                _i.parse().with_context(|| format!("while parsing: {}", #name_str))?
+                                _i.parse().with_context(|| format!("while parsing column {}", #name_str))?
                             );
                         }
                     }
@@ -198,7 +198,8 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                     // normal TryInto conversion
                     quote! {
                         #name_str => {
-                            #name = Some(v.try_into().context(#name_str)?);
+                            println!("{:?}", v);
+                            #name = Some(v.try_into().with_context(|| format!("while converting column {}", #name_str))?);
                         }
                     }
                 }
