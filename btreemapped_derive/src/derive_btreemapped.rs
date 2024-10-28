@@ -184,14 +184,23 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             }
             None => {
                 if field_parse.contains(name) {
+                    // use FromStr to convert from String
                     quote! {
                         #name_str => {
-                            let _i = TryInto::<String>::try_into(v)?;
-                            #name = Some(_i.parse()?);
+                            let _i = TryInto::<String>::try_into(v)
+                                .with_context(|| format!("while converting to String: {}", #name_str))?;
+                            #name = Some(
+                                _i.parse().with_context(|| format!("while parsing: {}", #name_str))?
+                            );
                         }
                     }
                 } else {
-                    quote! { #name_str => { #name = Some(v.try_into()?); } }
+                    // normal TryInto conversion
+                    quote! {
+                        #name_str => {
+                            #name = Some(v.try_into().context(#name_str)?);
+                        }
+                    }
                 }
             }
         };
@@ -254,6 +263,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                 schema: &pg_replicate::table::TableSchema,
                 row: pg_replicate::conversions::table_row::TableRow,
             ) -> anyhow::Result<(Option<Self::Index>, Option<Self::Unindexed>)> {
+                use anyhow::Context;
                 #(#parse_row_var_decls;)*
                 let mut n = 0;
                 for v in row.values {
