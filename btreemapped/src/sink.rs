@@ -28,7 +28,8 @@ pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
 }
 
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
-    pub fn new(seqid: u64, table_name: &str) -> Self {
+    pub fn new(table_name: &str) -> Self {
+        let seqid = rand::random::<u64>();
         let mut replica = BTreeMapReplica::new();
         replica.set_seqid(seqid);
         Self {

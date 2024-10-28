@@ -19,6 +19,7 @@ async-trait = { workspace = true }
 btreemapped_derive = { version = "0.1.0", path = "../btreemapped_derive" }
 paste = { workspace = true }
 pg_replicate = { workspace = true }
+rand = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
