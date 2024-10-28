@@ -198,6 +198,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                     // normal TryInto conversion
                     quote! {
                         #name_str => {
+                            println!("{}: {:?}", #name_str, v);
                             #name = Some(v.try_into().with_context(|| format!("while converting column \"{}\"", #name_str))?);
                         }
                     }
