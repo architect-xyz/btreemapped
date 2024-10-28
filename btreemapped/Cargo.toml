@@ -17,6 +17,7 @@ derive = []
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 btreemapped_derive = { version = "0.1.0", path = "../btreemapped_derive" }
+log = { workspace = true, optional = true }
 paste = { workspace = true }
 pg_replicate = { workspace = true }
 rand = { workspace = true }

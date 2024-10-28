@@ -47,5 +47,5 @@ pub trait BTreeMapped<const N: usize>: Clone + 'static {
     fn parse_row(
         schema: &pg_replicate::table::TableSchema,
         row: pg_replicate::conversions::table_row::TableRow,
-    ) -> (Option<Self::Index>, Option<Self::Unindexed>);
+    ) -> anyhow::Result<(Option<Self::Index>, Option<Self::Unindexed>)>;
 }

@@ -45,6 +45,44 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
     }
 }
 
+fn parse_row<T: BTreeMapped<N>, const N: usize>(
+    schema: &TableSchema,
+    row: TableRow,
+) -> Result<(T::Index, T::Unindexed), SinkError> {
+    match T::parse_row(schema, row) {
+        Ok((Some(index), Some(unindexed))) => Ok((index, unindexed)),
+        Ok(_) => {
+            #[cfg(feature = "log")]
+            log::error!("parse_row returned incomplete");
+            Err(SinkError::GenericSinkError)
+        }
+        Err(_e) => {
+            #[cfg(feature = "log")]
+            log::error!("parse_row returned error: {_e:?}");
+            Err(SinkError::GenericSinkError)
+        }
+    }
+}
+
+fn parse_row_index<T: BTreeMapped<N>, const N: usize>(
+    schema: &TableSchema,
+    row: TableRow,
+) -> Result<T::Index, SinkError> {
+    match T::parse_row(schema, row) {
+        Ok((Some(index), _)) => Ok(index),
+        Ok(_) => {
+            #[cfg(feature = "log")]
+            log::error!("parse_row returned incomplete");
+            Err(SinkError::GenericSinkError)
+        }
+        Err(_e) => {
+            #[cfg(feature = "log")]
+            log::error!("parse_row returned error: {_e:?}");
+            Err(SinkError::GenericSinkError)
+        }
+    }
+}
+
 // CR alee: implement BatchSink
 #[async_trait]
 impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
@@ -77,24 +115,21 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
     ) -> Result<(), SinkError> {
         if self.table_id.is_some_and(|id| id == table_id) {
             let schema = self.table_schema.as_ref().unwrap();
-            if let (Some(index), Some(unindexed)) = T::parse_row(schema, row) {
-                let (seqid, seqno) = {
-                    let mut replica = self.replica.write().unwrap();
-                    replica.insert(index.clone().into(), unindexed.clone());
-                    replica.seqno += 1;
-                    (replica.seqid, replica.seqno)
-                };
-                self.replica.changed.notify_waiters();
-                if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
-                    seqid,
-                    seqno,
-                    snapshot: None,
-                    updates: vec![(index, Some(unindexed))],
-                })) {
-                    // nobody listening, fine
-                }
-            } else {
-                Err(SinkError::GenericSinkError)?;
+            let (index, unindexed) = parse_row::<T, N>(schema, row)?;
+            let (seqid, seqno) = {
+                let mut replica = self.replica.write().unwrap();
+                replica.insert(index.clone().into(), unindexed.clone());
+                replica.seqno += 1;
+                (replica.seqid, replica.seqno)
+            };
+            self.replica.changed.notify_waiters();
+            if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
+                seqid,
+                seqno,
+                snapshot: None,
+                updates: vec![(index, Some(unindexed))],
+            })) {
+                // nobody listening, fine
             }
         }
         Ok(())
@@ -148,30 +183,26 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
             CdcEvent::Insert((tid, row)) => {
                 if self.table_id.is_some_and(|id| id == tid) {
                     let schema = self.table_schema.as_ref().unwrap();
-                    if let (Some(i), Some(u)) = T::parse_row(schema, row) {
-                        self.txn_clog.push(Ok((i, u)));
-                    }
+                    let (i, u) = parse_row::<T, N>(schema, row)?;
+                    self.txn_clog.push(Ok((i, u)));
                 }
             }
             CdcEvent::Update { table_id, old_row: _, key_row, row } => {
                 if self.table_id.is_some_and(|id| id == table_id) {
                     let schema = self.table_schema.as_ref().unwrap();
                     if let Some(key) = key_row {
-                        if let (Some(key), _) = T::parse_row(schema, key) {
-                            self.txn_clog.push(Err(key));
-                        }
+                        let i = parse_row_index::<T, N>(schema, key)?;
+                        self.txn_clog.push(Err(i));
                     }
-                    if let (Some(i), Some(u)) = T::parse_row(schema, row) {
-                        self.txn_clog.push(Ok((i, u)));
-                    }
+                    let (i, u) = parse_row::<T, N>(schema, row)?;
+                    self.txn_clog.push(Ok((i, u)));
                 }
             }
             CdcEvent::Delete((tid, row)) => {
                 if self.table_id.is_some_and(|id| id == tid) {
                     let schema = self.table_schema.as_ref().unwrap();
-                    if let (Some(i), _) = T::parse_row(schema, row) {
-                        self.txn_clog.push(Err(i));
-                    }
+                    let i = parse_row_index::<T, N>(schema, row)?;
+                    self.txn_clog.push(Err(i));
                 }
             }
             CdcEvent::Relation(_) => {}

@@ -177,8 +177,8 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                 // use an intermediate type to convert from SQL
                 quote! {
                     #name_str => {
-                        let _i = TryInto::<#try_from_ty>::try_into(v).ok();
-                        #name = _i.and_then(|i| i.try_into().ok());
+                        let _i = TryInto::<#try_from_ty>::try_into(v)?;
+                        #name = Some(_i.try_into()?);
                     }
                 }
             }
@@ -186,12 +186,12 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                 if field_parse.contains(name) {
                     quote! {
                         #name_str => {
-                            let _i = TryInto::<String>::try_into(v).ok();
-                            #name = _i.and_then(|i| i.parse().ok());
+                            let _i = TryInto::<String>::try_into(v)?;
+                            #name = Some(_i.parse()?);
                         }
                     }
                 } else {
-                    quote! { #name_str => { #name = v.try_into().ok(); } }
+                    quote! { #name_str => { #name = Some(v.try_into()?); } }
                 }
             }
         };
@@ -253,7 +253,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             fn parse_row(
                 schema: &pg_replicate::table::TableSchema,
                 row: pg_replicate::conversions::table_row::TableRow,
-            ) -> (Option<Self::Index>, Option<Self::Unindexed>) {
+            ) -> anyhow::Result<(Option<Self::Index>, Option<Self::Unindexed>)> {
                 #(#parse_row_var_decls;)*
                 let mut n = 0;
                 for v in row.values {
@@ -272,7 +272,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                     #(#unwrap_unindexed_vars)*
                     Some(#parse_row_unindexed_ctor)
                 };
-                (maybe_index(), maybe_unindexed())
+                Ok((maybe_index(), maybe_unindexed()))
             }
         }
     };
