@@ -50,12 +50,7 @@ fn parse_row<T: BTreeMapped<N>, const N: usize>(
     row: TableRow,
 ) -> Result<(T::Index, T::Unindexed), SinkError> {
     match T::parse_row(schema, row) {
-        Ok((Some(index), Some(unindexed))) => Ok((index, unindexed)),
-        Ok(_) => {
-            #[cfg(feature = "log")]
-            log::error!("parse_row returned incomplete");
-            Err(SinkError::GenericSinkError)
-        }
+        Ok((index, unindexed)) => Ok((index, unindexed)),
         Err(_e) => {
             #[cfg(feature = "log")]
             log::error!("parse_row returned error: {_e:?}");
@@ -68,13 +63,8 @@ fn parse_row_index<T: BTreeMapped<N>, const N: usize>(
     schema: &TableSchema,
     row: TableRow,
 ) -> Result<T::Index, SinkError> {
-    match T::parse_row(schema, row) {
-        Ok((Some(index), _)) => Ok(index),
-        Ok(_) => {
-            #[cfg(feature = "log")]
-            log::error!("parse_row returned incomplete");
-            Err(SinkError::GenericSinkError)
-        }
+    match T::parse_row_index(schema, row) {
+        Ok(index) => Ok(index),
         Err(_e) => {
             #[cfg(feature = "log")]
             log::error!("parse_row returned error: {_e:?}");

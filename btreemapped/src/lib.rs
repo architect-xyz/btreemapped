@@ -44,8 +44,15 @@ pub trait BTreeMapped<const N: usize>: Clone + 'static {
         unindexed: &'a Self::Unindexed,
     ) -> Option<Self::Ref<'a>>;
 
+    /// Parse a row from pg_replica into a full struct.
     fn parse_row(
         schema: &pg_replicate::table::TableSchema,
         row: pg_replicate::conversions::table_row::TableRow,
-    ) -> anyhow::Result<(Option<Self::Index>, Option<Self::Unindexed>)>;
+    ) -> anyhow::Result<(Self::Index, Self::Unindexed)>;
+
+    /// Parse a row from pg_replica into just the index struct.
+    fn parse_row_index(
+        schema: &pg_replicate::table::TableSchema,
+        row: pg_replicate::conversions::table_row::TableRow,
+    ) -> anyhow::Result<Self::Index>;
 }

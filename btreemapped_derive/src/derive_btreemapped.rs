@@ -161,15 +161,17 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     }
 
     // Generate statements for parse_row
-    let mut parse_row_var_decls = vec![];
+    let mut parse_row_index_var_decls = vec![];
+    let mut parse_row_unindexed_var_decls = vec![];
     for (name, ty) in &index_fields {
-        parse_row_var_decls.push(quote! { let mut #name: Option<#ty> = None; });
+        parse_row_index_var_decls.push(quote! { let mut #name: Option<#ty> = None; });
     }
     for (name, ty) in &unindexed_fields {
-        parse_row_var_decls.push(quote! { let mut #name: Option<#ty> = None; });
+        parse_row_unindexed_var_decls.push(quote! { let mut #name: Option<#ty> = None; });
     }
 
-    let mut parse_row_match_arms = vec![];
+    let mut parse_row_index_match_arms = vec![];
+    let mut parse_row_unindexed_match_arms = vec![];
     for (name, _) in &all_fields {
         let name_str = name.to_string();
         let conversion_arm = match field_try_from.get(name) {
@@ -198,24 +200,35 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                     // normal TryInto conversion
                     quote! {
                         #name_str => {
-                            println!("{}: {:?}", #name_str, v);
                             #name = Some(v.try_into().with_context(|| format!("while converting column \"{}\"", #name_str))?);
                         }
                     }
                 }
             }
         };
-        parse_row_match_arms.push(conversion_arm);
+        if index_fields_names.contains(&name_str) {
+            parse_row_index_match_arms.push(conversion_arm);
+        } else {
+            parse_row_unindexed_match_arms.push(conversion_arm);
+        }
     }
 
     let mut unwrap_index_vars = vec![];
     for (name, _) in &index_fields {
-        unwrap_index_vars.push(quote! { let #name = #name?; });
+        unwrap_index_vars.push(quote! {
+            let #name = #name.ok_or_else(||
+                anyhow::anyhow!("missing column: #name")
+            )?;
+        });
     }
 
     let mut unwrap_unindexed_vars = vec![];
     for (name, _) in &unindexed_fields {
-        unwrap_unindexed_vars.push(quote! { let #name = #name?; });
+        unwrap_unindexed_vars.push(quote! {
+            let #name = #name.ok_or_else(||
+                anyhow::anyhow!("missing column: #name")
+            )?;
+        });
     }
 
     let parse_row_index_ctor = if index_fields_names.len() == 1 {
@@ -263,27 +276,45 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             fn parse_row(
                 schema: &pg_replicate::table::TableSchema,
                 row: pg_replicate::conversions::table_row::TableRow,
-            ) -> anyhow::Result<(Option<Self::Index>, Option<Self::Unindexed>)> {
+            ) -> anyhow::Result<(Self::Index, Self::Unindexed)> {
                 use anyhow::Context;
-                #(#parse_row_var_decls;)*
+                #(#parse_row_index_var_decls;)*
+                #(#parse_row_unindexed_var_decls;)*
                 let mut n = 0;
                 for v in row.values {
                     let col = &schema.column_schemas[n];
                     match col.name.as_ref() {
-                        #(#parse_row_match_arms,)*
+                        #(#parse_row_index_match_arms,)*
+                        #(#parse_row_unindexed_match_arms,)*
                         _ => {}
                     }
                     n += 1;
                 }
-                let maybe_index = || {
-                    #(#unwrap_index_vars)*
-                    Some(#parse_row_index_ctor)
-                };
-                let maybe_unindexed = || {
-                    #(#unwrap_unindexed_vars)*
-                    Some(#parse_row_unindexed_ctor)
-                };
-                Ok((maybe_index(), maybe_unindexed()))
+                #(#unwrap_index_vars)*
+                #(#unwrap_unindexed_vars)*
+                Ok((
+                    #parse_row_index_ctor,
+                    #parse_row_unindexed_ctor,
+                ))
+            }
+
+            fn parse_row_index(
+                schema: &pg_replicate::table::TableSchema,
+                row: pg_replicate::conversions::table_row::TableRow,
+            ) -> anyhow::Result<Self::Index> {
+                use anyhow::Context;
+                #(#parse_row_index_var_decls;)*
+                let mut n = 0;
+                for v in row.values {
+                    let col = &schema.column_schemas[n];
+                    match col.name.as_ref() {
+                        #(#parse_row_index_match_arms,)*
+                        _ => {}
+                    }
+                    n += 1;
+                }
+                #(#unwrap_index_vars)*
+                Ok(#parse_row_index_ctor)
             }
         }
     };
