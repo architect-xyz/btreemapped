@@ -2,7 +2,6 @@
 
 use crate::{lvalue::*, BTreeMapped};
 use btreemapped_derive::impl_for_range;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -13,7 +12,7 @@ use tokio::sync::{broadcast, Notify};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BTreeSnapshot<T: BTreeMapped<N>, const N: usize> {
-    pub epoch: DateTime<Utc>,
+    pub seqid: u64,
     pub seqno: u64,
     // NB: BTreeMap<K, V> isn't representable in JSON for complex K,
     // so we deliver Vec<(K, V)> instead.
@@ -22,7 +21,7 @@ pub struct BTreeSnapshot<T: BTreeMapped<N>, const N: usize> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
-    pub epoch: DateTime<Utc>,
+    pub seqid: u64,
     pub seqno: u64,
     // if snapshot is provided, always use it, then apply updates
     // as normal; server may supply a snapshot at any time
@@ -33,7 +32,7 @@ pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
 
 #[derive(Debug, Clone)]
 pub struct Sequenced<T> {
-    pub epoch: DateTime<Utc>,
+    pub seqid: u64,
     pub seqno: u64,
     pub t: T,
 }
@@ -62,8 +61,8 @@ pub struct BTreeMapReplica<T: BTreeMapped<N>, const N: usize> {
 
 #[derive(Debug, Error)]
 pub enum BTreeMapSyncError {
-    #[error("wrong epoch")]
-    WrongEpoch,
+    #[error("seqid mismatch")]
+    SeqidMismatch,
     #[error("seqno skip")]
     SeqnoSkip,
 }
@@ -73,7 +72,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         let (updates, _) = broadcast::channel(100);
         Self {
             replica: Arc::new(RwLock::new(Sequenced {
-                epoch: DateTime::<Utc>::MIN_UTC,
+                seqid: 0,
                 seqno: 0,
                 t: BTreeMap::new(),
             })),
@@ -89,9 +88,9 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         replica.insert(i.into(), u);
     }
 
-    pub(crate) fn set_epoch(&mut self, epoch: DateTime<Utc>) {
+    pub(crate) fn set_seqid(&mut self, seqid: u64) {
         let mut replica = self.replica.write().unwrap();
-        replica.epoch = epoch;
+        replica.seqid = seqid;
     }
 
     pub fn snapshot(&self) -> BTreeSnapshot<T, N> {
@@ -102,36 +101,36 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             let u = v.clone();
             snapshot.push((i, u));
         }
-        BTreeSnapshot { epoch: replica.epoch, seqno: replica.seqno, snapshot }
+        BTreeSnapshot { seqid: replica.seqid, seqno: replica.seqno, snapshot }
     }
 
-    pub fn apply_snapshot(&mut self, snap: BTreeSnapshot<T, N>) -> (DateTime<Utc>, u64) {
+    pub fn apply_snapshot(&mut self, snap: BTreeSnapshot<T, N>) -> (u64, u64) {
         let mut replica = self.replica.write().unwrap();
         replica.clear();
         for (i, u) in snap.snapshot.iter() {
             replica.insert(i.clone().into(), u.clone());
         }
-        replica.epoch = snap.epoch;
+        replica.seqid = snap.seqid;
         replica.seqno = snap.seqno;
         self.changed.notify_waiters();
-        (replica.epoch, replica.seqno)
+        (replica.seqid, replica.seqno)
     }
 
     pub fn apply_update(
         &mut self,
         up: BTreeUpdate<T, N>,
-    ) -> Result<(DateTime<Utc>, u64), BTreeMapSyncError> {
+    ) -> Result<(u64, u64), BTreeMapSyncError> {
         let mut replica = self.replica.write().unwrap();
         if let Some(snapshot) = up.snapshot.as_ref() {
             replica.clear();
             for (i, u) in snapshot.iter() {
                 replica.insert(i.clone().into(), u.clone());
             }
-            replica.epoch = up.epoch;
+            replica.seqid = up.seqid;
             replica.seqno = up.seqno;
         } else {
-            if up.epoch != replica.epoch {
-                return Err(BTreeMapSyncError::WrongEpoch);
+            if up.seqid != replica.seqid {
+                return Err(BTreeMapSyncError::SeqidMismatch);
             }
             if up.seqno != replica.seqno + 1 {
                 return Err(BTreeMapSyncError::SeqnoSkip);
@@ -148,7 +147,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             }
         }
         replica.seqno = up.seqno;
-        Ok((replica.epoch, replica.seqno))
+        Ok((replica.seqid, replica.seqno))
     }
 
     pub fn for_each<F>(&self, mut f: F)
@@ -183,6 +182,7 @@ impl_for_range!(LIndex4<I0, I1, I2, I3>);
 mod tests {
     use super::*;
     use btreemapped_derive::BTreeMapped;
+    use chrono::{DateTime, Utc};
     use std::borrow::Cow;
 
     #[derive(Debug, Clone, BTreeMapped)]

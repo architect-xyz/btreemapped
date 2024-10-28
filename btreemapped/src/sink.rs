@@ -2,7 +2,6 @@
 
 use crate::{BTreeMapReplica, BTreeMapped, BTreeUpdate};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use pg_replicate::{
     conversions::{cdc_event::CdcEvent, table_row::TableRow},
     pipeline::{
@@ -29,9 +28,9 @@ pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
 }
 
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
-    pub fn new(epoch: DateTime<Utc>, table_name: &str) -> Self {
+    pub fn new(seqid: u64, table_name: &str) -> Self {
         let mut replica = BTreeMapReplica::new();
-        replica.set_epoch(epoch);
+        replica.set_seqid(seqid);
         Self {
             replica,
             committed_tables: HashSet::new(),
@@ -78,15 +77,15 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
         if self.table_id.is_some_and(|id| id == table_id) {
             let schema = self.table_schema.as_ref().unwrap();
             if let (Some(index), Some(unindexed)) = T::parse_row(schema, row) {
-                let (epoch, seqno) = {
+                let (seqid, seqno) = {
                     let mut replica = self.replica.write().unwrap();
                     replica.insert(index.clone().into(), unindexed.clone());
                     replica.seqno += 1;
-                    (replica.epoch, replica.seqno)
+                    (replica.seqid, replica.seqno)
                 };
                 self.replica.changed.notify_waiters();
                 if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
-                    epoch,
+                    seqid,
                     seqno,
                     snapshot: None,
                     updates: vec![(index, Some(unindexed))],
@@ -111,7 +110,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                 if let Some(final_lsn) = self.txn_lsn {
                     if commit_lsn == final_lsn {
                         let mut updates = vec![];
-                        let (epoch, seqno) = {
+                        let (seqid, seqno) = {
                             let mut replica = self.replica.write().unwrap();
                             for chg in self.txn_clog.drain(..) {
                                 match chg {
@@ -126,12 +125,12 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                                 }
                             }
                             replica.seqno += 1;
-                            (replica.epoch, replica.seqno)
+                            (replica.seqid, replica.seqno)
                         };
                         self.committed_lsn = commit_lsn;
                         self.replica.changed.notify_waiters();
                         if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
-                            epoch,
+                            seqid,
                             seqno,
                             snapshot: None,
                             updates,
@@ -187,15 +186,15 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
 
     async fn truncate_table(&mut self, table_id: TableId) -> Result<(), SinkError> {
         if self.table_id.is_some_and(|id| id == table_id) {
-            let (epoch, seqno) = {
+            let (seqid, seqno) = {
                 let mut replica = self.replica.write().unwrap();
                 replica.clear();
                 replica.seqno += 1;
-                (replica.epoch, replica.seqno)
+                (replica.seqid, replica.seqno)
             };
             self.replica.changed.notify_waiters();
             if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
-                epoch,
+                seqid,
                 seqno,
                 snapshot: Some(vec![]),
                 updates: vec![],
