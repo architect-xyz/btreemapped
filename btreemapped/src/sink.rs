@@ -107,7 +107,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
             let schema = self.table_schema.as_ref().unwrap();
             let (index, unindexed) = parse_row::<T, N>(schema, row)?;
             let (seqid, seqno) = {
-                let mut replica = self.replica.write().unwrap();
+                let mut replica = self.replica.write();
                 replica.insert(index.clone().into(), unindexed.clone());
                 replica.seqno += 1;
                 (replica.seqid, replica.seqno)
@@ -137,7 +137,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                     if commit_lsn == final_lsn {
                         let mut updates = vec![];
                         let (seqid, seqno) = {
-                            let mut replica = self.replica.write().unwrap();
+                            let mut replica = self.replica.write();
                             for chg in self.txn_clog.drain(..) {
                                 match chg {
                                     Ok((i, u)) => {
@@ -209,7 +209,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
     async fn truncate_table(&mut self, table_id: TableId) -> Result<(), SinkError> {
         if self.table_id.is_some_and(|id| id == table_id) {
             let (seqid, seqno) = {
-                let mut replica = self.replica.write().unwrap();
+                let mut replica = self.replica.write();
                 replica.clear();
                 replica.seqno += 1;
                 (replica.seqid, replica.seqno)

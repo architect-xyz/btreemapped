@@ -91,7 +91,7 @@ pub fn impl_for_range(input: TokenStream) -> TokenStream {
                 let end: std::ops::Bound<#lindex_ty> = range
                     .end_bound()
                     .map(|x| #lindex_ident(#(#end_bound_bind,)*));
-                let replica = self.replica.read().unwrap();
+                let replica = self.replica.read();
                 for (k, v) in replica.range((start, end)) {
                     if let Some(t) = T::kv_as_ref(k, v) {
                         f(t);

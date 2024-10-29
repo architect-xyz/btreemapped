@@ -2,11 +2,9 @@
 
 use crate::{lvalue::*, BTreeMapped};
 use btreemapped_derive::impl_for_range;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, RwLock},
-};
+use std::{collections::BTreeMap, sync::Arc};
 use thiserror::Error;
 use tokio::sync::{broadcast, Notify};
 
@@ -83,18 +81,18 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
 
     #[cfg(test)]
     fn insert(&mut self, t: T) {
-        let mut replica = self.replica.write().unwrap();
+        let mut replica = self.replica.write();
         let (i, u) = t.into_kv();
         replica.insert(i.into(), u);
     }
 
     pub(crate) fn set_seqid(&mut self, seqid: u64) {
-        let mut replica = self.replica.write().unwrap();
+        let mut replica = self.replica.write();
         replica.seqid = seqid;
     }
 
     pub fn snapshot(&self) -> BTreeSnapshot<T, N> {
-        let replica = self.replica.read().unwrap();
+        let replica = self.replica.read();
         let mut snapshot = vec![];
         for (k, v) in replica.iter() {
             let i: T::Index = k.try_into().ok().unwrap();
@@ -105,7 +103,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     }
 
     pub fn apply_snapshot(&mut self, snap: BTreeSnapshot<T, N>) -> (u64, u64) {
-        let mut replica = self.replica.write().unwrap();
+        let mut replica = self.replica.write();
         replica.clear();
         for (i, u) in snap.snapshot.iter() {
             replica.insert(i.clone().into(), u.clone());
@@ -120,7 +118,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         &mut self,
         up: BTreeUpdate<T, N>,
     ) -> Result<(u64, u64), BTreeMapSyncError> {
-        let mut replica = self.replica.write().unwrap();
+        let mut replica = self.replica.write();
         if let Some(snapshot) = up.snapshot.as_ref() {
             replica.clear();
             for (i, u) in snapshot.iter() {
@@ -150,11 +148,34 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok((replica.seqid, replica.seqno))
     }
 
+    // CR alee: I bet if we used a normal looking BTreeMap, like BTreeMap<T::LIndex, T>
+    // instead and just accept an extra index clone...then we would use parking_lot's
+    // mutex maps and get a normal person interface instead of w/e this mess is.
+    //
+    // And it would use the same amount of space anyways as the Postgres original.
+
+    /// Visit the item referenced by the given index, call `f` if it exists.
+    /// Returns true if the item exists, false otherwise.
+    pub fn where_<F>(&self, i: T::Index, f: F) -> bool
+    where
+        F: Fn(T::Ref<'_>),
+    {
+        let index: T::LIndex = i.into();
+        let replica = self.replica.read();
+        let t = replica.get(&index).and_then(|u| T::kv_as_ref(&index, u));
+        if let Some(t) = t {
+            f(t);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn for_each<F>(&self, mut f: F)
     where
         F: FnMut(T::Ref<'_>),
     {
-        let replica = self.replica.read().unwrap();
+        let replica = self.replica.read();
         for (k, v) in replica.iter() {
             if let Some(t) = T::kv_as_ref(k, v) {
                 f(t);
