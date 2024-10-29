@@ -2,7 +2,7 @@
 
 use crate::{lvalue::*, BTreeMapped};
 use btreemapped_derive::impl_for_range;
-use parking_lot::RwLock;
+use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 use thiserror::Error;
@@ -146,41 +146,13 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok((replica.seqid, replica.seqno))
     }
 
-    // CR alee: I bet if we used a normal looking BTreeMap, like BTreeMap<T::LIndex, T>
-    // instead and just accept an extra index clone...then we would use parking_lot's
-    // mutex maps and get a normal person interface instead of w/e this mess is.
-    //
-    // And it would use the same amount of space anyways as the Postgres original.
-
-    // /// Visit the item referenced by the given index, call `f` if it exists.
-    // /// Returns true if the item exists, false otherwise.
-    // pub fn where_<F>(&self, i: T::Index, f: F) -> bool
-    // where
-    //     F: FnOnce(T::Ref<'_>),
-    // {
-    //     let index: T::LIndex = i.into();
-    //     let replica = self.replica.read();
-    //     let t = replica.get(&index).and_then(|u| T::kv_as_ref(&index, u));
-    //     if let Some(t) = t {
-    //         f(t);
-    //         true
-    //     } else {
-    //         false
-    //     }
-    // }
-
-    // pub fn get_cloned(&self, i: T::Index) -> Option<T> {
-    //     self.get_map(i, |t| t.to_owned())
-    // }
-
-    // pub fn get_map<F, U>(&self, i: T::Index, f: F) -> Option<U>
-    // where
-    //     F: Fn(T::Ref<'_>) -> U,
-    // {
-    //     let mut u = None;
-    //     self.where_(i, |t| u = Some(f(t)));
-    //     u
-    // }
+    pub fn get(&self, i: T::Index) -> Option<MappedRwLockReadGuard<T>> {
+        let replica = self.replica.read();
+        match RwLockReadGuard::try_map(replica, |r| r.get(&i.into())) {
+            Ok(t) => Some(t),
+            Err(_) => None,
+        }
+    }
 
     pub fn for_each<F>(&self, mut f: F)
     where
@@ -234,6 +206,9 @@ mod tests {
         replica.insert(Foo::new("abc", None));
         replica.insert(Foo::new("def", Some("2024-03-01T00:30:44Z".parse().unwrap())));
         replica.insert(Foo::new("ghi", None));
+        let foo = replica.get(("def".to_string(),)).unwrap();
+        assert_eq!(foo.key, "def");
+        assert_eq!(foo.bar, Some("2024-03-01T00:30:44Z".parse().unwrap()));
         let mut io = vec![];
         replica.for_range1("abc".to_string()..="ghi".to_string(), |foo| {
             io.push(format!("{} {:?}", foo.key, foo.bar));
