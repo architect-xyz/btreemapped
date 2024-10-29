@@ -158,7 +158,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     /// Returns true if the item exists, false otherwise.
     pub fn where_<F>(&self, i: T::Index, f: F) -> bool
     where
-        F: Fn(T::Ref<'_>),
+        F: FnOnce(T::Ref<'_>),
     {
         let index: T::LIndex = i.into();
         let replica = self.replica.read();
@@ -169,6 +169,15 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         } else {
             false
         }
+    }
+
+    pub fn get_map<F, U>(&self, i: T::Index, f: F) -> Option<U>
+    where
+        F: Fn(T::Ref<'_>) -> U,
+    {
+        let mut u = None;
+        self.where_(i, |t| u = Some(f(t)));
+        u
     }
 
     pub fn for_each<F>(&self, mut f: F)
