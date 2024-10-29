@@ -146,9 +146,13 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok((replica.seqid, replica.seqno))
     }
 
-    pub fn get(&self, i: T::Index) -> Option<MappedRwLockReadGuard<T>> {
+    pub fn get<Q>(&self, i: Q) -> Option<MappedRwLockReadGuard<T>>
+    where
+        Q: Into<T::LIndex>,
+    {
+        let i: T::LIndex = i.into();
         let replica = self.replica.read();
-        match RwLockReadGuard::try_map(replica, |r| r.get(&i.into())) {
+        match RwLockReadGuard::try_map(replica, |r| r.get(&i)) {
             Ok(t) => Some(t),
             Err(_) => None,
         }
@@ -206,7 +210,7 @@ mod tests {
         replica.insert(Foo::new("abc", None));
         replica.insert(Foo::new("def", Some("2024-03-01T00:30:44Z".parse().unwrap())));
         replica.insert(Foo::new("ghi", None));
-        let foo = replica.get(("def".to_string(),)).unwrap();
+        let foo = replica.get("def".to_string()).unwrap();
         assert_eq!(foo.key, "def");
         assert_eq!(foo.bar, Some("2024-03-01T00:30:44Z".parse().unwrap()));
         let mut io = vec![];
@@ -244,6 +248,8 @@ mod tests {
         replica.insert(Car::new("Bob", 888, "def"));
         replica.insert(Car::new("Charlie", 1002, "ghi"));
         replica.insert(Car::new("Charlie", 1003, "ghi"));
+        let elem = replica.get((Cow::Borrowed("Alice"), 123)).unwrap();
+        assert_eq!(elem.key, "abc");
         let mut io = vec![];
         replica.for_range1(Cow::Borrowed("Alice")..=Cow::Borrowed("Bob"), |car| {
             io.push(format!("{} {} {}", car.owner, car.license_plate, car.key));

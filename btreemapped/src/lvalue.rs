@@ -74,6 +74,14 @@ macro_rules! lindex {
 }
 
 lindex!(LIndex1, N = 1, I0);
+
+// special case for single-element tuples
+impl<I0> From<I0> for LIndex1<I0> {
+    fn from(i0: I0) -> Self {
+        LIndex1(LValue::Exact(i0))
+    }
+}
+
 lindex!(LIndex2, N = 2, I0, I1);
 lindex!(LIndex3, N = 3, I0, I1, I2);
 lindex!(LIndex4, N = 4, I0, I1, I2, I3);
