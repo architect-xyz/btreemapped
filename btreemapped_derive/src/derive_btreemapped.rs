@@ -43,9 +43,11 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     // Indexed fields should be in the order of the spec
     let mut index_fields_by_name: HashMap<String, (Ident, Type)> = HashMap::new();
     let mut index_fields = vec![];
+    let mut index_field_idents = vec![];
     let mut index_field_types = vec![]; // just the types in order, for convenience
     let mut lindex_field_types = vec![]; // same as index_field_types, except String => str
     let mut unindexed_fields = vec![];
+    let mut unindexed_field_idents = vec![];
     let mut unindexed_field_types = vec![]; // just the types in order, for convenience
     let mut all_fields = vec![]; // all fields, for convenience
     let mut field_try_from: HashMap<Ident, Type> = HashMap::new();
@@ -66,8 +68,10 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
         }
         all_fields.push((name.clone(), ty.clone()));
         if index_fields_names.contains(&name.to_string()) {
+            index_field_idents.push(name.clone());
             index_fields_by_name.insert(name.to_string(), (name, ty));
         } else {
+            unindexed_field_idents.push(name.clone());
             unindexed_field_types.push(ty.clone());
             unindexed_fields.push((name, ty));
         }
@@ -87,43 +91,10 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     // Generate the index tuple constructor for into_kv
     let index_tuple_ctor = if index_fields.len() == 1 {
         let (name, _) = &index_fields[0];
-        quote! { (self.#name,) }
+        quote! { (self.#name.clone(),) }
     } else {
         let names = index_fields.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
-        quote! { (#(self.#names),*) }
-    };
-
-    // Generate the unindexed tuple constructor for into_kv
-    let unindexed_tuple_ctor = if unindexed_fields.len() == 0 {
-        quote! { () }
-    } else if unindexed_fields.len() == 1 {
-        let (name, _) = &unindexed_fields[0];
-        quote! { (self.#name,) }
-    } else {
-        let names =
-            unindexed_fields.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
-        quote! { (#(self.#names),*) }
-    };
-
-    // Generate Ref struct name
-    let ref_struct_name = format_ident!("{}Ref", struct_name);
-
-    // Generate Ref struct fields with lifetime and type transformations
-    let ref_fields = all_fields.iter().map(|(name, ty)| {
-        let ref_ty = if is_string_type(ty) {
-            quote! { &'a str }
-        } else {
-            quote! { &'a #ty }
-        };
-        quote! { pub #name: #ref_ty }
-    });
-
-    // Generate the Ref struct
-    let ref_struct = quote! {
-        #[derive(Debug, Clone, Serialize)]
-        pub struct #ref_struct_name<'a> {
-            #(#ref_fields),*
-        }
+        quote! { (#(self.#names.clone()),*) }
     };
 
     // Determine the number of index fields to select appropriate LIndexN
@@ -137,16 +108,6 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
         quote! { (#ty,) }
     } else {
         quote! { (#(#index_field_types),*) }
-    };
-
-    // Generate Unindexed type tuple
-    let unindexed_type = if unindexed_fields.len() == 0 {
-        quote! { () }
-    } else if unindexed_fields.len() == 1 {
-        let (_, ty) = unindexed_fields[0].clone();
-        quote! { (#ty,) }
-    } else {
-        quote! { (#(#unindexed_field_types),*) }
     };
 
     // Generate struct fields for kv_as_ref
@@ -239,44 +200,22 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
         quote! { (#(#names),*) }
     };
 
-    let parse_row_unindexed_ctor = if unindexed_fields.len() == 0 {
-        quote! { () }
-    } else if unindexed_fields.len() == 1 {
-        let (name, _) = &unindexed_fields[0];
-        quote! { (#name,) }
-    } else {
-        let names =
-            unindexed_fields.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
-        quote! { (#(#names),*) }
-    };
-
     let index_arity = index_fields.len();
 
     // Generate the impl block for BTreeMapped
     let impl_block = quote! {
         impl BTreeMapped<#index_arity> for #struct_name {
-            type Ref<'a> = #ref_struct_name<'a>;
             type LIndex = #lindex_type;
             type Index = #index_tuple;
-            type Unindexed = #unindexed_type;
 
-            fn into_kv(self) -> (Self::Index, Self::Unindexed) {
-                (#index_tuple_ctor, #unindexed_tuple_ctor)
-            }
-
-            fn kv_as_ref<'a>(
-                index: &'a Self::LIndex,
-                unindexed: &'a Self::Unindexed,
-            ) -> Option<Self::Ref<'a>> {
-                Some(#ref_struct_name {
-                    #(#kv_ref_fields),*
-                })
+            fn index(&self) -> Self::Index {
+                #index_tuple_ctor
             }
 
             fn parse_row(
                 schema: &pg_replicate::table::TableSchema,
                 row: pg_replicate::conversions::table_row::TableRow,
-            ) -> anyhow::Result<(Self::Index, Self::Unindexed)> {
+            ) -> anyhow::Result<Self> {
                 use anyhow::Context;
                 #(#parse_row_index_var_decls;)*
                 #(#parse_row_unindexed_var_decls;)*
@@ -292,10 +231,10 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                 }
                 #(#unwrap_index_vars)*
                 #(#unwrap_unindexed_vars)*
-                Ok((
-                    #parse_row_index_ctor,
-                    #parse_row_unindexed_ctor,
-                ))
+                Ok(#struct_name {
+                    #(#index_field_idents,)*
+                    #(#unindexed_field_idents,)*
+                })
             }
 
             fn parse_row_index(
@@ -321,8 +260,6 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
 
     // Combine everything
     let expanded = quote! {
-        #ref_struct
-
         #impl_block
     };
 
@@ -332,7 +269,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
 
 // CR alee: pretty sure this is unsound, let's see if it ends up being
 // "good enough" for awhile
-fn is_string_type(ty: &Type) -> bool {
+fn _is_string_type(ty: &Type) -> bool {
     match ty {
         Type::Path(type_path) => {
             let segment = type_path.path.segments.last().unwrap();

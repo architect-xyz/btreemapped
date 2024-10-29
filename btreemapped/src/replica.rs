@@ -12,9 +12,7 @@ use tokio::sync::{broadcast, Notify};
 pub struct BTreeSnapshot<T: BTreeMapped<N>, const N: usize> {
     pub seqid: u64,
     pub seqno: u64,
-    // NB: BTreeMap<K, V> isn't representable in JSON for complex K,
-    // so we deliver Vec<(K, V)> instead.
-    pub snapshot: Vec<(T::Index, T::Unindexed)>,
+    pub snapshot: Vec<T>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,9 +21,9 @@ pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
     pub seqno: u64,
     // if snapshot is provided, always use it, then apply updates
     // as normal; server may supply a snapshot at any time
-    pub snapshot: Option<Vec<(T::Index, T::Unindexed)>>,
+    pub snapshot: Option<Vec<T>>,
     // semantics of updates are (K, None) for delete, (K, Some(V)) for insert/update
-    pub updates: Vec<(T::Index, Option<T::Unindexed>)>,
+    pub updates: Vec<(T::Index, Option<T>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +50,7 @@ impl<T> std::ops::DerefMut for Sequenced<T> {
 // NB alee: a bit unfortunate that we have to specify the INDEX_ARITY here
 #[derive(Debug, Clone)]
 pub struct BTreeMapReplica<T: BTreeMapped<N>, const N: usize> {
-    pub replica: Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T::Unindexed>>>>,
+    pub replica: Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T>>>>,
     pub changed: Arc<Notify>,
     pub updates: broadcast::Sender<Arc<BTreeUpdate<T, N>>>,
 }
@@ -82,8 +80,8 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     #[cfg(test)]
     fn insert(&mut self, t: T) {
         let mut replica = self.replica.write();
-        let (i, u) = t.into_kv();
-        replica.insert(i.into(), u);
+        let i = t.index();
+        replica.insert(i.into(), t);
     }
 
     pub(crate) fn set_seqid(&mut self, seqid: u64) {
@@ -94,10 +92,8 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     pub fn snapshot(&self) -> BTreeSnapshot<T, N> {
         let replica = self.replica.read();
         let mut snapshot = vec![];
-        for (k, v) in replica.iter() {
-            let i: T::Index = k.try_into().ok().unwrap();
-            let u = v.clone();
-            snapshot.push((i, u));
+        for (_i, t) in replica.iter() {
+            snapshot.push(t.clone());
         }
         BTreeSnapshot { seqid: replica.seqid, seqno: replica.seqno, snapshot }
     }
@@ -105,8 +101,9 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     pub fn apply_snapshot(&mut self, snap: BTreeSnapshot<T, N>) -> (u64, u64) {
         let mut replica = self.replica.write();
         replica.clear();
-        for (i, u) in snap.snapshot.iter() {
-            replica.insert(i.clone().into(), u.clone());
+        for t in snap.snapshot {
+            let i = t.index();
+            replica.insert(i.into(), t);
         }
         replica.seqid = snap.seqid;
         replica.seqno = snap.seqno;
@@ -119,10 +116,11 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         up: BTreeUpdate<T, N>,
     ) -> Result<(u64, u64), BTreeMapSyncError> {
         let mut replica = self.replica.write();
-        if let Some(snapshot) = up.snapshot.as_ref() {
+        if let Some(snapshot) = up.snapshot {
             replica.clear();
-            for (i, u) in snapshot.iter() {
-                replica.insert(i.clone().into(), u.clone());
+            for t in snapshot {
+                let i = t.index();
+                replica.insert(i.into(), t);
             }
             replica.seqid = up.seqid;
             replica.seqno = up.seqno;
@@ -134,13 +132,13 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
                 return Err(BTreeMapSyncError::SeqnoSkip);
             }
         }
-        for (i, u) in up.updates.iter() {
-            match u {
-                Some(u) => {
-                    replica.insert(i.clone().into(), u.clone());
+        for (i, t) in up.updates {
+            match t {
+                Some(t) => {
+                    replica.insert(i.into(), t);
                 }
                 None => {
-                    replica.remove(&i.clone().into());
+                    replica.remove(&i.into());
                 }
             }
         }
@@ -154,47 +152,49 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     //
     // And it would use the same amount of space anyways as the Postgres original.
 
-    /// Visit the item referenced by the given index, call `f` if it exists.
-    /// Returns true if the item exists, false otherwise.
-    pub fn where_<F>(&self, i: T::Index, f: F) -> bool
-    where
-        F: FnOnce(T::Ref<'_>),
-    {
-        let index: T::LIndex = i.into();
-        let replica = self.replica.read();
-        let t = replica.get(&index).and_then(|u| T::kv_as_ref(&index, u));
-        if let Some(t) = t {
-            f(t);
-            true
-        } else {
-            false
-        }
-    }
+    // /// Visit the item referenced by the given index, call `f` if it exists.
+    // /// Returns true if the item exists, false otherwise.
+    // pub fn where_<F>(&self, i: T::Index, f: F) -> bool
+    // where
+    //     F: FnOnce(T::Ref<'_>),
+    // {
+    //     let index: T::LIndex = i.into();
+    //     let replica = self.replica.read();
+    //     let t = replica.get(&index).and_then(|u| T::kv_as_ref(&index, u));
+    //     if let Some(t) = t {
+    //         f(t);
+    //         true
+    //     } else {
+    //         false
+    //     }
+    // }
 
-    pub fn get_map<F, U>(&self, i: T::Index, f: F) -> Option<U>
-    where
-        F: Fn(T::Ref<'_>) -> U,
-    {
-        let mut u = None;
-        self.where_(i, |t| u = Some(f(t)));
-        u
-    }
+    // pub fn get_cloned(&self, i: T::Index) -> Option<T> {
+    //     self.get_map(i, |t| t.to_owned())
+    // }
+
+    // pub fn get_map<F, U>(&self, i: T::Index, f: F) -> Option<U>
+    // where
+    //     F: Fn(T::Ref<'_>) -> U,
+    // {
+    //     let mut u = None;
+    //     self.where_(i, |t| u = Some(f(t)));
+    //     u
+    // }
 
     pub fn for_each<F>(&self, mut f: F)
     where
-        F: FnMut(T::Ref<'_>),
+        F: FnMut(&T),
     {
         let replica = self.replica.read();
-        for (k, v) in replica.iter() {
-            if let Some(t) = T::kv_as_ref(k, v) {
-                f(t);
-            }
+        for (_i, t) in replica.iter() {
+            f(t);
         }
     }
 }
 
 impl<T: BTreeMapped<N>, const N: usize> std::ops::Deref for BTreeMapReplica<T, N> {
-    type Target = Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T::Unindexed>>>>;
+    type Target = Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T>>>>;
 
     fn deref(&self) -> &Self::Target {
         &self.replica

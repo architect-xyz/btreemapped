@@ -21,7 +21,7 @@ pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
     committed_tables: HashSet<TableId>,
     committed_lsn: PgLsn,
     txn_lsn: Option<PgLsn>,
-    txn_clog: Vec<Result<(T::Index, T::Unindexed), T::Index>>,
+    txn_clog: Vec<Result<T, T::Index>>,
     table_id: Option<TableId>,
     table_name: String,
     table_schema: Option<TableSchema>,
@@ -48,9 +48,9 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
 fn parse_row<T: BTreeMapped<N>, const N: usize>(
     schema: &TableSchema,
     row: TableRow,
-) -> Result<(T::Index, T::Unindexed), SinkError> {
+) -> Result<T, SinkError> {
     match T::parse_row(schema, row) {
-        Ok((index, unindexed)) => Ok((index, unindexed)),
+        Ok(t) => Ok(t),
         Err(_e) => {
             #[cfg(feature = "log")]
             log::error!("parse_row returned error: {_e:?}");
@@ -105,10 +105,11 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
     ) -> Result<(), SinkError> {
         if self.table_id.is_some_and(|id| id == table_id) {
             let schema = self.table_schema.as_ref().unwrap();
-            let (index, unindexed) = parse_row::<T, N>(schema, row)?;
+            let t = parse_row::<T, N>(schema, row)?;
+            let index = t.index();
             let (seqid, seqno) = {
                 let mut replica = self.replica.write();
-                replica.insert(index.clone().into(), unindexed.clone());
+                replica.insert(index.clone().into(), t.clone());
                 replica.seqno += 1;
                 (replica.seqid, replica.seqno)
             };
@@ -117,7 +118,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                 seqid,
                 seqno,
                 snapshot: None,
-                updates: vec![(index, Some(unindexed))],
+                updates: vec![(index, Some(t))],
             })) {
                 // nobody listening, fine
             }
@@ -140,9 +141,10 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                             let mut replica = self.replica.write();
                             for chg in self.txn_clog.drain(..) {
                                 match chg {
-                                    Ok((i, u)) => {
-                                        replica.insert(i.clone().into(), u.clone());
-                                        updates.push((i, Some(u)));
+                                    Ok(t) => {
+                                        let i = t.index();
+                                        replica.insert(i.clone().into(), t.clone());
+                                        updates.push((i, Some(t)));
                                     }
                                     Err(i) => {
                                         replica.remove(&i.clone().into());
@@ -173,8 +175,8 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
             CdcEvent::Insert((tid, row)) => {
                 if self.table_id.is_some_and(|id| id == tid) {
                     let schema = self.table_schema.as_ref().unwrap();
-                    let (i, u) = parse_row::<T, N>(schema, row)?;
-                    self.txn_clog.push(Ok((i, u)));
+                    let t = parse_row::<T, N>(schema, row)?;
+                    self.txn_clog.push(Ok(t));
                 }
             }
             CdcEvent::Update { table_id, old_row: _, key_row, row } => {
@@ -184,8 +186,8 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                         let i = parse_row_index::<T, N>(schema, key)?;
                         self.txn_clog.push(Err(i));
                     }
-                    let (i, u) = parse_row::<T, N>(schema, row)?;
-                    self.txn_clog.push(Ok((i, u)));
+                    let t = parse_row::<T, N>(schema, row)?;
+                    self.txn_clog.push(Ok(t));
                 }
             }
             CdcEvent::Delete((tid, row)) => {

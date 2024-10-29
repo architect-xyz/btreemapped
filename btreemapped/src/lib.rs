@@ -12,8 +12,7 @@ pub use btreemapped_derive::BTreeMapped;
 pub use lvalue::*;
 pub use replica::{BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate};
 
-pub trait BTreeMapped<const N: usize>: Clone + 'static {
-    type Ref<'a>;
+pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     type LIndex: HasArity<N>
         + std::fmt::Debug
         + Eq
@@ -22,6 +21,8 @@ pub trait BTreeMapped<const N: usize>: Clone + 'static {
         + Send
         + Sync
         + 'static;
+    // CR alee: consider dropping this and just using LIndex directly,
+    // although is it more obtuse with or without the intermediate?
     type Index: Into<Self::LIndex>
         + for<'a> TryFrom<&'a Self::LIndex>
         + Clone
@@ -30,27 +31,18 @@ pub trait BTreeMapped<const N: usize>: Clone + 'static {
         + Send
         + Sync
         + 'static;
-    type Unindexed: Clone
-        + serde::Serialize
-        + serde::de::DeserializeOwned
-        + Send
-        + Sync
-        + 'static;
 
-    fn into_kv(self) -> (Self::Index, Self::Unindexed);
-
-    fn kv_as_ref<'a>(
-        index: &'a Self::LIndex,
-        unindexed: &'a Self::Unindexed,
-    ) -> Option<Self::Ref<'a>>;
+    /// Build the index value for this struct.
+    fn index(&self) -> Self::Index;
 
     /// Parse a row from pg_replica into a full struct.
     fn parse_row(
         schema: &pg_replicate::table::TableSchema,
         row: pg_replicate::conversions::table_row::TableRow,
-    ) -> anyhow::Result<(Self::Index, Self::Unindexed)>;
+    ) -> anyhow::Result<Self>;
 
-    /// Parse a row from pg_replica into just the index struct.
+    /// Parse a row from pg_replica into just the index.
+    /// Used for UPDATE/DELETE operations.
     fn parse_row_index(
         schema: &pg_replicate::table::TableSchema,
         row: pg_replicate::conversions::table_row::TableRow,
