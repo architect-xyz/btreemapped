@@ -127,6 +127,8 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
     }
 
     async fn write_cdc_event(&mut self, event: CdcEvent) -> Result<PgLsn, SinkError> {
+        #[cfg(feature = "log")]
+        log::trace!("write_cdc_event: {:?}", event);
         match event {
             CdcEvent::Begin(begin) => {
                 let final_lsn_u64 = begin.final_lsn();
@@ -201,7 +203,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
             CdcEvent::KeepAliveRequested { reply: _ } => {}
         }
         #[cfg(feature = "log")]
-        log::debug!("committed_lsn: {}", self.committed_lsn);
+        log::trace!("committed_lsn: {}", self.committed_lsn);
         Ok(self.committed_lsn)
     }
 
