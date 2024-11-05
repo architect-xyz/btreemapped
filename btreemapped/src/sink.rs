@@ -200,6 +200,8 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
             CdcEvent::Relation(_) => {}
             CdcEvent::KeepAliveRequested { reply: _ } => {}
         }
+        #[cfg(feature = "log")]
+        log::debug!("committed_lsn: {}", self.committed_lsn);
         Ok(self.committed_lsn)
     }
 
