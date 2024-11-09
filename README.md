@@ -11,3 +11,4 @@ todo:
 - String -> Cow<str> conversions
 - Erase arity from the type somehow?
 - Refactor a bit to reflect that a sink could cover multiple tables/replicas
+- Use fully qualified name for LIndex* in btreemapped_derive, so users don't have to import it explicitly
