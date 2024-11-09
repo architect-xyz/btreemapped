@@ -1,6 +1,7 @@
 //! Concrete replica of a database table in memory as a BTreeMap.
 
 use crate::{lvalue::*, BTreeMapped};
+use anyhow::{bail, Result};
 use btreemapped_derive::impl_for_range;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,15 @@ pub struct BTreeMapReplica<T: BTreeMapped<N>, const N: usize> {
     pub replica: Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T>>>>,
     pub changed: Arc<Notify>,
     pub updates: broadcast::Sender<Arc<BTreeUpdate<T, N>>>,
+    // If true, insert/remove directly to the replica will work; normally,
+    // this should be false (signifying that this BTreeMapReplica is a
+    // read-only or follower of some upstream source like a database or
+    // a BTreeMapped publisher)--writes should go directly to the source
+    // of truth.
+    //
+    // The use case for writable replicas is for testing or as a convenience
+    // for local dev where you don't want to run a Postgres, e.g.
+    read_only_replica: bool,
 }
 
 #[derive(Debug, Error)]
@@ -64,29 +74,75 @@ pub enum BTreeMapSyncError {
 }
 
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
-    pub fn new() -> Self {
+    pub fn new(seqid: u64) -> Self {
         let (updates, _) = broadcast::channel(100);
         Self {
             replica: Arc::new(RwLock::new(Sequenced {
-                seqid: 0,
+                seqid,
                 seqno: 0,
                 t: BTreeMap::new(),
             })),
             changed: Arc::new(Notify::new()),
             updates,
+            read_only_replica: true,
         }
     }
 
+    /// Create an in-memory-only replica that can be written to directly.
+    /// For testing or local dev convenience (e.g. not running a Postgres).
+    pub fn new_in_memory() -> Self {
+        let mut t = Self::new(0);
+        t.read_only_replica = false;
+        t
+    }
+
+    /// Same as `insert` but ignores the `read_only_replica` flag.
     #[cfg(test)]
-    fn insert(&mut self, t: T) {
+    fn insert_for_test(&mut self, t: T) {
         let mut replica = self.replica.write();
         let i = t.index();
         replica.insert(i.into(), t);
     }
 
-    pub(crate) fn set_seqid(&mut self, seqid: u64) {
-        let mut replica = self.replica.write();
-        replica.seqid = seqid;
+    pub fn insert(&mut self, t: T) -> Result<()> {
+        if self.read_only_replica {
+            bail!("cannot insert into read-only replica");
+        }
+        let (i, seqid, seqno) = {
+            let mut replica = self.replica.write();
+            let i = t.index();
+            replica.insert(i.clone().into(), t.clone());
+            replica.seqno += 1;
+            (i, replica.seqid, replica.seqno)
+        };
+        self.changed.notify_waiters();
+        let _ = self.updates.send(Arc::new(BTreeUpdate {
+            seqid,
+            seqno,
+            snapshot: None,
+            updates: vec![(i, Some(t))],
+        }));
+        Ok(())
+    }
+
+    pub fn remove(&mut self, i: &T::Index) -> Result<()> {
+        if self.read_only_replica {
+            bail!("cannot remove from read-only replica");
+        }
+        let (seqid, seqno) = {
+            let mut replica = self.replica.write();
+            replica.remove(&i.clone().into());
+            replica.seqno += 1;
+            (replica.seqid, replica.seqno)
+        };
+        self.changed.notify_waiters();
+        let _ = self.updates.send(Arc::new(BTreeUpdate {
+            seqid,
+            seqno,
+            snapshot: None,
+            updates: vec![(i.clone(), None)],
+        }));
+        Ok(())
     }
 
     pub fn snapshot(&self) -> BTreeSnapshot<T, N> {
@@ -206,10 +262,13 @@ mod tests {
 
     #[test]
     fn test_btreemap_replica1() {
-        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
-        replica.insert(Foo::new("abc", None));
-        replica.insert(Foo::new("def", Some("2024-03-01T00:30:44Z".parse().unwrap())));
-        replica.insert(Foo::new("ghi", None));
+        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new(0);
+        replica.insert_for_test(Foo::new("abc", None));
+        replica.insert_for_test(Foo::new(
+            "def",
+            Some("2024-03-01T00:30:44Z".parse().unwrap()),
+        ));
+        replica.insert_for_test(Foo::new("ghi", None));
         let foo = replica.get("def".to_string()).unwrap();
         assert_eq!(foo.key, "def");
         assert_eq!(foo.bar, Some("2024-03-01T00:30:44Z".parse().unwrap()));
@@ -240,14 +299,14 @@ mod tests {
 
     #[test]
     fn test_btreemap_replica2() {
-        let mut replica: BTreeMapReplica<Car, 2> = BTreeMapReplica::new();
-        replica.insert(Car::new("Alice", 123, "abc"));
-        replica.insert(Car::new("Charlie", 1000, "ghi"));
-        replica.insert(Car::new("Charlie", 1001, "ghi"));
-        replica.insert(Car::new("Bob", 456, "def"));
-        replica.insert(Car::new("Bob", 888, "def"));
-        replica.insert(Car::new("Charlie", 1002, "ghi"));
-        replica.insert(Car::new("Charlie", 1003, "ghi"));
+        let mut replica: BTreeMapReplica<Car, 2> = BTreeMapReplica::new(0);
+        replica.insert_for_test(Car::new("Alice", 123, "abc"));
+        replica.insert_for_test(Car::new("Charlie", 1000, "ghi"));
+        replica.insert_for_test(Car::new("Charlie", 1001, "ghi"));
+        replica.insert_for_test(Car::new("Bob", 456, "def"));
+        replica.insert_for_test(Car::new("Bob", 888, "def"));
+        replica.insert_for_test(Car::new("Charlie", 1002, "ghi"));
+        replica.insert_for_test(Car::new("Charlie", 1003, "ghi"));
         let elem = replica.get((Cow::Borrowed("Alice"), 123)).unwrap();
         assert_eq!(elem.key, "abc");
         let mut io = vec![];

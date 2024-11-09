@@ -30,8 +30,7 @@ pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
     pub fn new(table_name: &str) -> Self {
         let seqid = rand::random::<u64>();
-        let mut replica = BTreeMapReplica::new();
-        replica.set_seqid(seqid);
+        let replica = BTreeMapReplica::new(seqid);
         Self {
             replica,
             committed_tables: HashSet::new(),
