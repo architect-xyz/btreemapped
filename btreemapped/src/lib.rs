@@ -4,13 +4,16 @@
 //! TODO: fill out prose documentation here
 
 pub mod lvalue;
+pub mod multi_sink;
 pub mod replica;
 pub mod sink;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::BTreeMapped;
 pub use lvalue::*;
+pub use multi_sink::MultiBTreeMapSink;
 pub use replica::{BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate};
+pub use sink::BTreeMapSink;
 
 pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     type LIndex: HasArity<N>

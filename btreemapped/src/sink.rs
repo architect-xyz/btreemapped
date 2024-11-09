@@ -72,6 +72,53 @@ fn parse_row_index<T: BTreeMapped<N>, const N: usize>(
     }
 }
 
+// MultiBTreeMapSink need to be able to manipulate the inner state
+// of the individual sinks; also erase the types so we can put them
+// in Box<dyn>s.
+pub(crate) trait ErasedBTreeMapSink: Sink + Send {
+    fn set_table_id_and_schema(&mut self, table_id: TableId, schema: TableSchema);
+    fn commit(&mut self, commit_lsn: PgLsn);
+}
+
+impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N> {
+    fn set_table_id_and_schema(&mut self, table_id: TableId, schema: TableSchema) {
+        self.table_id = Some(table_id);
+        self.table_schema = Some(schema);
+    }
+
+    fn commit(&mut self, commit_lsn: PgLsn) {
+        let mut updates = vec![];
+        let (seqid, seqno) = {
+            let mut replica = self.replica.write();
+            for chg in self.txn_clog.drain(..) {
+                match chg {
+                    Ok(t) => {
+                        let i = t.index();
+                        replica.insert(i.clone().into(), t.clone());
+                        updates.push((i, Some(t)));
+                    }
+                    Err(i) => {
+                        replica.remove(&i.clone().into());
+                        updates.push((i, None));
+                    }
+                }
+            }
+            replica.seqno += 1;
+            (replica.seqid, replica.seqno)
+        };
+        self.committed_lsn = commit_lsn;
+        self.replica.changed.notify_waiters();
+        if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
+            seqid,
+            seqno,
+            snapshot: None,
+            updates,
+        })) {
+            // nobody listening, fine
+        }
+    }
+}
+
 // CR alee: implement BatchSink
 #[async_trait]
 impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
@@ -137,35 +184,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                 let commit_lsn: PgLsn = commit.commit_lsn().into();
                 if let Some(final_lsn) = self.txn_lsn {
                     if commit_lsn == final_lsn {
-                        let mut updates = vec![];
-                        let (seqid, seqno) = {
-                            let mut replica = self.replica.write();
-                            for chg in self.txn_clog.drain(..) {
-                                match chg {
-                                    Ok(t) => {
-                                        let i = t.index();
-                                        replica.insert(i.clone().into(), t.clone());
-                                        updates.push((i, Some(t)));
-                                    }
-                                    Err(i) => {
-                                        replica.remove(&i.clone().into());
-                                        updates.push((i, None));
-                                    }
-                                }
-                            }
-                            replica.seqno += 1;
-                            (replica.seqid, replica.seqno)
-                        };
-                        self.committed_lsn = commit_lsn;
-                        self.replica.changed.notify_waiters();
-                        if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
-                            seqid,
-                            seqno,
-                            snapshot: None,
-                            updates,
-                        })) {
-                            // nobody listening, fine
-                        }
+                        self.commit(commit_lsn);
                     } else {
                         Err(SinkError::IncorrectCommitLsn(commit_lsn, final_lsn))?
                     }
