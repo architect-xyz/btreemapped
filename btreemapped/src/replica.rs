@@ -248,6 +248,14 @@ mod tests {
     use std::borrow::Cow;
 
     #[derive(Debug, Clone, BTreeMapped)]
+    #[btreemap(index = ["a", "b", "c"])]
+    struct Bar {
+        a: i64,
+        b: i64,
+        c: i64,
+    }
+
+    #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["key"])]
     struct Foo {
         key: String,

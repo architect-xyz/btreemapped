@@ -219,15 +219,15 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                 use anyhow::Context;
                 #(#parse_row_index_var_decls;)*
                 #(#parse_row_unindexed_var_decls;)*
-                let mut n = 0;
+                let mut _n = 0;
                 for v in row.values {
-                    let col = &schema.column_schemas[n];
+                    let col = &schema.column_schemas[_n];
                     match col.name.as_ref() {
                         #(#parse_row_index_match_arms,)*
                         #(#parse_row_unindexed_match_arms,)*
                         _ => {}
                     }
-                    n += 1;
+                    _n += 1;
                 }
                 #(#unwrap_index_vars)*
                 #(#unwrap_unindexed_vars)*
@@ -243,14 +243,14 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             ) -> anyhow::Result<Self::Index> {
                 use anyhow::Context;
                 #(#parse_row_index_var_decls;)*
-                let mut n = 0;
+                let mut _n = 0;
                 for v in row.values {
-                    let col = &schema.column_schemas[n];
+                    let col = &schema.column_schemas[_n];
                     match col.name.as_ref() {
                         #(#parse_row_index_match_arms,)*
                         _ => {}
                     }
-                    n += 1;
+                    _n += 1;
                 }
                 #(#unwrap_index_vars)*
                 Ok(#parse_row_index_ctor)
