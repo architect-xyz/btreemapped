@@ -133,7 +133,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
 
     let mut parse_row_index_match_arms = vec![];
     let mut parse_row_unindexed_match_arms = vec![];
-    for (name, _) in &all_fields {
+    for (name, ty) in &all_fields {
         let name_str = name.to_string();
         let conversion_arm = match field_try_from.get(name) {
             Some(try_from_ty) => {
@@ -147,14 +147,33 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             }
             None => {
                 if field_parse.contains(name) {
-                    // use FromStr to convert from String
-                    quote! {
-                        #name_str => {
-                            let _i = TryInto::<String>::try_into(v)
-                                .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
-                            #name = Some(
-                                _i.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
-                            );
+                    // use FromStr to convert from String or Option<String> as appropriate
+                    if is_option_type(ty) {
+                        quote! {
+                            #name_str => {
+                                let _i = TryInto::<Option<String>>::try_into(v)
+                                    .with_context(|| format!("while converting column \"{}\" to Option<String>", #name_str))?;
+                                match _i {
+                                    Some(s) => {
+                                        #name = Some(Some(
+                                            s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                        ));
+                                    }
+                                    None => {
+                                        #name = Some(None);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #name_str => {
+                                let _i = TryInto::<String>::try_into(v)
+                                    .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
+                                #name = Some(
+                                    _i.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                );
+                            }
                         }
                     }
                 } else {
@@ -265,6 +284,16 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
 
     // Convert into a TokenStream and return
     TokenStream::from(expanded)
+}
+
+fn is_option_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(type_path) => {
+            let segment = type_path.path.segments.last().unwrap();
+            segment.ident == "Option"
+        }
+        _ => false,
+    }
 }
 
 // CR alee: pretty sure this is unsound, let's see if it ends up being

@@ -248,14 +248,6 @@ mod tests {
     use std::borrow::Cow;
 
     #[derive(Debug, Clone, BTreeMapped)]
-    #[btreemap(index = ["a", "b", "c"])]
-    struct Bar {
-        a: i64,
-        b: i64,
-        c: i64,
-    }
-
-    #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["key"])]
     struct Foo {
         key: String,
@@ -338,6 +330,33 @@ mod tests {
         });
         assert_eq!(io4, vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]);
     }
+    
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+    enum Something {
+        A,
+        B
+    }
+
+    impl std::str::FromStr for Something {
+        type Err = anyhow::Error;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            Ok(match s {
+                "A" => Self::A,
+                "B" => Self::B,
+                _ => bail!("invalid value"),
+            })
+        }
+    }
+
+    /// Shows that parse works for Option<T>s when T implements FromStr
+    #[derive(Debug, Clone, BTreeMapped)]
+    #[btreemap(index = ["custom"])]
+    struct Baz {
+        #[parse]
+        custom: Option<Something>,
+    }
+
 }
 
 // TODO: consider https://github.com/boustrophedon/pgtemp for integration testing
