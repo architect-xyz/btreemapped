@@ -136,6 +136,8 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
         table_schemas: HashMap<TableId, TableSchema>,
     ) -> Result<(), SinkError> {
         for (id, schema) in table_schemas {
+            #[cfg(feature = "log")]
+            log::trace!("write_table_schemas: {:?}", schema);
             if schema.table_name.name == self.table_name {
                 self.table_id = Some(id);
                 self.table_schema = Some(schema);
@@ -149,6 +151,8 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
         row: TableRow,
         table_id: TableId,
     ) -> Result<(), SinkError> {
+        #[cfg(feature = "log")]
+        log::trace!("write_table_row to table {table_id}: {:?}", row);
         if self.table_id.is_some_and(|id| id == table_id) {
             let schema = self.table_schema.as_ref().unwrap();
             let t = parse_row::<T, N>(schema, row)?;
