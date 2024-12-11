@@ -27,6 +27,13 @@ pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
     pub updates: Vec<(T::Index, Option<T>)>,
 }
 
+/// Template struct provided for e.g. proxied writes to database
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BTreeWrite<T: BTreeMapped<N>, const N: usize> {
+    pub upsert: Option<Vec<T>>,
+    pub delete: Option<Vec<T::Index>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Sequenced<T> {
     pub seqid: u64,
@@ -330,11 +337,13 @@ mod tests {
         });
         assert_eq!(io4, vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]);
     }
-    
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+
+    #[derive(
+        Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    )]
     enum Something {
         A,
-        B
+        B,
     }
 
     impl std::str::FromStr for Something {
@@ -356,7 +365,6 @@ mod tests {
         #[parse]
         custom: Option<Something>,
     }
-
 }
 
 // TODO: consider https://github.com/boustrophedon/pgtemp for integration testing
