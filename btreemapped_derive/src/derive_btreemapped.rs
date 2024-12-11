@@ -52,6 +52,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     let mut all_fields = vec![]; // all fields, for convenience
     let mut field_try_from: HashMap<Ident, Type> = HashMap::new();
     let mut field_parse: HashSet<Ident> = HashSet::new();
+    let mut field_enum: HashSet<Ident> = HashSet::new();
 
     for field in fields {
         let name = field.ident.clone().expect("Expected named fields");
@@ -65,6 +66,8 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             field_try_from.insert(name.clone(), try_from_ty);
         } else if field.attrs.iter().any(|attr| attr.path().is_ident("parse")) {
             field_parse.insert(name.clone());
+        } else if field.attrs.iter().any(|attr| attr.path().is_ident("enum")) {
+            field_enum.insert(name.clone());
         }
         all_fields.push((name.clone(), ty.clone()));
         if index_fields_names.contains(&name.to_string()) {
@@ -172,6 +175,38 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                                     .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
                                 #name = Some(
                                     _i.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                );
+                            }
+                        }
+                    }
+                } else if field_enum.contains(name) {
+                    // convert from Vec<u8> to String, then parse from String
+                    if is_option_type(ty) {
+                        quote! {
+                            #name_str => {
+                                let _i = TryInto::<Option<Vec<u8>>>::try_into(v)
+                                    .with_context(|| format!("while converting column \"{}\" to Option<Vec<u8>>", #name_str))?;
+                                match _i {
+                                    Some(b) => {
+                                        let _s = std::str::from_utf8(&b)?;
+                                        #name = Some(Some(
+                                            _s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                        ));
+                                    }
+                                    None => {
+                                        #name = Some(None);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #name_str => {
+                                let _i = TryInto::<Vec<u8>>::try_into(v)
+                                    .with_context(|| format!("while converting column \"{}\" to Vec<u8>", #name_str))?;
+                                let _s = std::str::from_utf8(&_i)?;
+                                #name = Some(
+                                    _s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
                                 );
                             }
                         }
