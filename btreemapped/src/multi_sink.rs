@@ -132,6 +132,7 @@ impl Sink for MultiBTreeMapSink {
                     sink.write_cdc_event(event).await?;
                 }
             }
+            CdcEvent::Type(_) => {}
             CdcEvent::Relation(_) => {}
             CdcEvent::KeepAliveRequested { reply: _ } => {}
         }

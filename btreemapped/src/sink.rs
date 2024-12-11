@@ -221,6 +221,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                     self.txn_clog.push(Err(i));
                 }
             }
+            CdcEvent::Type(_) => {}
             CdcEvent::Relation(_) => {}
             CdcEvent::KeepAliveRequested { reply: _ } => {}
         }
