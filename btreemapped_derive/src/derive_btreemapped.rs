@@ -64,10 +64,13 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             .map(|attr| attr.parse_args::<Type>().unwrap())
         {
             field_try_from.insert(name.clone(), try_from_ty);
+        } else if field.attrs.iter().any(|attr| {
+            attr.path().is_ident("parse")
+                && attr.parse_args::<syn::Ident>().map_or(false, |i| i == "enum")
+        }) {
+            field_enum.insert(name.clone());
         } else if field.attrs.iter().any(|attr| attr.path().is_ident("parse")) {
             field_parse.insert(name.clone());
-        } else if field.attrs.iter().any(|attr| attr.path().is_ident("enum")) {
-            field_enum.insert(name.clone());
         }
         all_fields.push((name.clone(), ty.clone()));
         if index_fields_names.contains(&name.to_string()) {
