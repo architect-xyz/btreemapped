@@ -3,7 +3,7 @@ use proc_macro::TokenStream;
 mod derive_btreemapped;
 mod impl_for_range;
 
-#[proc_macro_derive(BTreeMapped, attributes(btreemap, try_from, parse))]
+#[proc_macro_derive(BTreeMapped, attributes(btreemap, parse, pg_enum, try_from))]
 pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     derive_btreemapped::derive_btreemapped(input)
 }
