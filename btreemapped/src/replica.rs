@@ -30,7 +30,7 @@ pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
 }
 
 #[derive(Debug, Clone, Copy, Error)]
-pub enum BTreeMapStreamError {
+pub enum BTreeUpdateStreamError {
     #[error("seqno skipped")]
     SeqnoSkip,
     #[error("stream lagged")]
@@ -178,7 +178,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     /// to be in strict seqno order.
     pub fn subscribe(
         &self,
-    ) -> impl Stream<Item = Result<Arc<BTreeUpdate<T, N>>, BTreeMapStreamError>> {
+    ) -> impl Stream<Item = Result<Arc<BTreeUpdate<T, N>>, BTreeUpdateStreamError>> {
         let mut updates = self.updates.subscribe();
         let snap = self.snapshot();
         let mut last_seqno = snap.seqno;
@@ -199,14 +199,14 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
                             last_seqno = up.seqno;
                             yield up;
                         } else {
-                            Err(BTreeMapStreamError::SeqnoSkip)?;
+                            Err(BTreeUpdateStreamError::SeqnoSkip)?;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        Err(BTreeMapStreamError::Lagged)?;
+                        Err(BTreeUpdateStreamError::Lagged)?;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        Err(BTreeMapStreamError::Closed)?;
+                        Err(BTreeUpdateStreamError::Closed)?;
                     }
                 }
             }
