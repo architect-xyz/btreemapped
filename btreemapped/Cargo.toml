@@ -15,8 +15,10 @@ derive = []
 
 [dependencies]
 anyhow = { workspace = true }
+async-stream = { workspace = true }
 async-trait = { workspace = true }
 btreemapped_derive = { version = "0.1.0", path = "../btreemapped_derive" }
+futures = { workspace = true }
 log = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 paste = { workspace = true }

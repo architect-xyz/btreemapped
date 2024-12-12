@@ -1,8 +1,10 @@
 //! Concrete replica of a database table in memory as a BTreeMap.
 
 use crate::{lvalue::*, BTreeMapped};
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
+use async_stream::try_stream;
 use btreemapped_derive::impl_for_range;
+use futures::Stream;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
@@ -159,6 +161,45 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             snapshot.push(t.clone());
         }
         BTreeSnapshot { seqid: replica.seqid, seqno: replica.seqno, snapshot }
+    }
+
+    /// Subscribe to a self-contained updates stream.  The first element is
+    /// guaranteed to contain a snapshot, and subsequent updates guaranteed
+    /// to be in strict seqno order.
+    pub fn subscribe(&self) -> impl Stream<Item = Result<Arc<BTreeUpdate<T, N>>>> {
+        let mut updates = self.updates.subscribe();
+        let snap = self.snapshot();
+        let mut last_seqno = snap.seqno;
+        let snap_as_update = Arc::new(BTreeUpdate {
+            seqid: snap.seqid,
+            seqno: snap.seqno,
+            snapshot: Some(snap.snapshot),
+            updates: vec![],
+        });
+        let stream = try_stream! {
+            yield snap_as_update;
+            loop {
+                match updates.recv().await {
+                    Ok(up) => {
+                        if up.seqno <= last_seqno {
+                            continue;
+                        } else if up.seqno == last_seqno + 1 {
+                            last_seqno = up.seqno;
+                            yield up;
+                        } else {
+                            Err(anyhow!("seqno skip"))?;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        Err(anyhow!("updates lagged"))?;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        Err(anyhow!("updates closed"))?;
+                    }
+                }
+            }
+        };
+        stream
     }
 
     pub fn apply_snapshot(&mut self, snap: BTreeSnapshot<T, N>) -> (u64, u64) {
