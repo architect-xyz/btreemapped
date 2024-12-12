@@ -1,7 +1,7 @@
 //! Concrete replica of a database table in memory as a BTreeMap.
 
 use crate::{lvalue::*, BTreeMapped};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use async_stream::try_stream;
 use btreemapped_derive::impl_for_range;
 use futures::Stream;
@@ -27,6 +27,16 @@ pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
     pub snapshot: Option<Vec<T>>,
     // semantics of updates are (K, None) for delete, (K, Some(V)) for insert/update
     pub updates: Vec<(T::Index, Option<T>)>,
+}
+
+#[derive(Debug, Clone, Copy, Error)]
+pub enum BTreeMapStreamError {
+    #[error("seqno skipped")]
+    SeqnoSkip,
+    #[error("stream lagged")]
+    Lagged,
+    #[error("stream ended")]
+    Closed,
 }
 
 /// Template struct provided for e.g. proxied writes to database
@@ -166,7 +176,9 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     /// Subscribe to a self-contained updates stream.  The first element is
     /// guaranteed to contain a snapshot, and subsequent updates guaranteed
     /// to be in strict seqno order.
-    pub fn subscribe(&self) -> impl Stream<Item = Result<Arc<BTreeUpdate<T, N>>>> {
+    pub fn subscribe(
+        &self,
+    ) -> impl Stream<Item = Result<Arc<BTreeUpdate<T, N>>, BTreeMapStreamError>> {
         let mut updates = self.updates.subscribe();
         let snap = self.snapshot();
         let mut last_seqno = snap.seqno;
@@ -187,14 +199,14 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
                             last_seqno = up.seqno;
                             yield up;
                         } else {
-                            Err(anyhow!("seqno skip"))?;
+                            Err(BTreeMapStreamError::SeqnoSkip)?;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        Err(anyhow!("updates lagged"))?;
+                        Err(BTreeMapStreamError::Lagged)?;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        Err(anyhow!("updates closed"))?;
+                        Err(BTreeMapStreamError::Closed)?;
                     }
                 }
             }
