@@ -39,7 +39,16 @@ pub enum BTreeUpdateStreamError {
     Closed,
 }
 
-/// Template struct provided for e.g. proxied writes to database
+/// Template struct provided for e.g. proxied writes to database;
+///
+/// Deletes should be effected after the upsert, and it's not expected
+/// for the upsert/delete pair to be atomic.  Writes from multiple
+/// sources may interleave and the ultimate source of truth should
+/// always be via replication.
+///
+/// E.g. knowing that you have send a sequence BTreeWrites to the
+/// upstream replicator does not imply that the final state of your
+/// replica can be computed from your own knowledge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BTreeWrite<T: BTreeMapped<N>, const N: usize> {
     pub upsert: Option<Vec<T>>,
