@@ -214,6 +214,8 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         stream
     }
 
+    /// When syncing from an upstream replicator, use `apply_snapshot`
+    /// on every BTreeSnapshot received.
     pub fn apply_snapshot(&mut self, snap: BTreeSnapshot<T, N>) -> (u64, u64) {
         let mut replica = self.replica.write();
         replica.clear();
@@ -227,6 +229,8 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         (replica.seqid, replica.seqno)
     }
 
+    /// When syncing from an upstream replicator, use `apply_update`
+    /// on every BTreeUpdate received.
     pub fn apply_update(
         &mut self,
         up: BTreeUpdate<T, N>,
@@ -259,6 +263,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             }
         }
         replica.seqno = up.seqno;
+        self.changed.notify_waiters();
         Ok((replica.seqid, replica.seqno))
     }
 
