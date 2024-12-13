@@ -344,8 +344,8 @@ fn _is_string_type(ty: &Type) -> bool {
 }
 
 /// Struct to parse the btreemap attribute arguments
-struct BTreeMappedArgs {
-    index: Vec<String>,
+pub(crate) struct BTreeMappedArgs {
+    pub(crate) index: Vec<String>,
 }
 
 impl Parse for BTreeMappedArgs {

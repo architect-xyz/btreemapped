@@ -9,7 +9,7 @@ pub mod replica;
 pub mod sink;
 
 #[cfg(feature = "derive")]
-pub use btreemapped_derive::BTreeMapped;
+pub use btreemapped_derive::{BTreeMapped, PgSchema};
 pub use lvalue::*;
 pub use multi_sink::MultiBTreeMapSink;
 pub use replica::{BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate};
@@ -50,4 +50,38 @@ pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
         schema: &pg_replicate::table::TableSchema,
         row: pg_replicate::conversions::table_row::TableRow,
     ) -> anyhow::Result<Self::Index>;
+}
+
+pub trait PgSchema {
+    fn column_names() -> impl ExactSizeIterator<Item = &'static str>;
+
+    fn column_types() -> impl ExactSizeIterator<Item = postgres_types::Type>;
+
+    fn primary_key_column_names() -> Option<impl ExactSizeIterator<Item = &'static str>>;
+
+    fn columns_to_sql(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &(dyn postgres_types::ToSql + Sync)>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use btreemapped_derive::PgSchema;
+    use chrono::{DateTime, Utc};
+    use postgres_types::Type;
+
+    #[allow(dead_code)]
+    #[derive(Debug, Clone, PgSchema)]
+    #[btreemap(index = ["key"])]
+    struct Foo {
+        #[pg_type(Type::TEXT)]
+        key: String,
+        #[pg_type(Type::TIMESTAMPTZ)]
+        bar: Option<DateTime<Utc>>,
+        #[pg_type(Type::INT4)]
+        baz: i32,
+        #[pg_type(Type::INT8)]
+        qux: i64,
+    }
 }
