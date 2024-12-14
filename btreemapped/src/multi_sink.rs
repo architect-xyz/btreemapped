@@ -130,7 +130,11 @@ impl Sink for MultiBTreeMapSink {
                     sink.write_cdc_event(event).await?;
                 } else {
                     #[cfg(feature = "log")]
-                    log::trace!("insert for unknown table_id: {}", tid);
+                    log::trace!(
+                        "insert for unknown table_id: {}, known tables are: {:?}",
+                        tid,
+                        self.table_ids
+                    );
                 }
             }
             CdcEvent::Update { table_id, .. } => {
@@ -138,7 +142,11 @@ impl Sink for MultiBTreeMapSink {
                     sink.write_cdc_event(event).await?;
                 } else {
                     #[cfg(feature = "log")]
-                    log::trace!("update for unknown table_id: {}", table_id);
+                    log::trace!(
+                        "update for unknown table_id: {}, known tables are: {:?}",
+                        table_id,
+                        self.table_ids
+                    );
                 }
             }
             CdcEvent::Delete((tid, _)) => {
@@ -146,7 +154,11 @@ impl Sink for MultiBTreeMapSink {
                     sink.write_cdc_event(event).await?;
                 } else {
                     #[cfg(feature = "log")]
-                    log::trace!("delete for unknown table_id: {}", tid);
+                    log::trace!(
+                        "delete for unknown table_id: {}, known tables are: {:?}",
+                        tid,
+                        self.table_ids
+                    );
                 }
             }
             CdcEvent::Type(_) => {}
