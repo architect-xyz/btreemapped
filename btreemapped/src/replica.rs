@@ -9,7 +9,7 @@ use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 use thiserror::Error;
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{broadcast, watch};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BTreeSnapshot<T: BTreeMapped<N>, const N: usize> {
@@ -80,7 +80,7 @@ impl<T> std::ops::DerefMut for Sequenced<T> {
 #[derive(Debug, Clone)]
 pub struct BTreeMapReplica<T: BTreeMapped<N>, const N: usize> {
     pub replica: Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T>>>>,
-    pub changed: Arc<Notify>,
+    pub changed: watch::Sender<(u64, u64)>,
     pub updates: broadcast::Sender<Arc<BTreeUpdate<T, N>>>,
     // If true, insert/remove directly to the replica will work; normally,
     // this should be false (signifying that this BTreeMapReplica is a
@@ -104,13 +104,14 @@ pub enum BTreeMapSyncError {
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     pub fn new(seqid: u64) -> Self {
         let (updates, _) = broadcast::channel(100);
+        let (changed, _) = watch::channel((seqid, 0));
         Self {
             replica: Arc::new(RwLock::new(Sequenced {
                 seqid,
                 seqno: 0,
                 t: BTreeMap::new(),
             })),
-            changed: Arc::new(Notify::new()),
+            changed,
             updates,
             read_only_replica: true,
         }
@@ -143,7 +144,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             replica.seqno += 1;
             (i, replica.seqid, replica.seqno)
         };
-        self.changed.notify_waiters();
+        let _ = self.changed.send_replace((seqid, seqno));
         let _ = self.updates.send(Arc::new(BTreeUpdate {
             seqid,
             seqno,
@@ -163,7 +164,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             replica.seqno += 1;
             (replica.seqid, replica.seqno)
         };
-        self.changed.notify_waiters();
+        let _ = self.changed.send_replace((seqid, seqno));
         let _ = self.updates.send(Arc::new(BTreeUpdate {
             seqid,
             seqno,
@@ -234,7 +235,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         }
         replica.seqid = snap.seqid;
         replica.seqno = snap.seqno;
-        self.changed.notify_waiters();
+        let _ = self.changed.send_replace((replica.seqid, replica.seqno));
         (replica.seqid, replica.seqno)
     }
 
@@ -272,7 +273,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             }
         }
         replica.seqno = up.seqno;
-        self.changed.notify_waiters();
+        let _ = self.changed.send_replace((replica.seqid, replica.seqno));
         Ok((replica.seqid, replica.seqno))
     }
 
