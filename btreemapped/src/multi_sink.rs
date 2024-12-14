@@ -78,6 +78,12 @@ impl Sink for MultiBTreeMapSink {
                 self.pending_sinks.remove(&schema.table_name.name)
             {
                 let table_name = schema.table_name.name.clone();
+                #[cfg(feature = "log")]
+                log::debug!(
+                    "table {} sink assigned, table_id = {}",
+                    table_name,
+                    table_id
+                );
                 sink.set_table_id_and_schema(table_id, schema);
                 self.sinks.insert(table_id, sink);
                 self.table_ids.insert(table_name, table_id);
