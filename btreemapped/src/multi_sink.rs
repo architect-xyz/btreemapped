@@ -68,6 +68,8 @@ impl Sink for MultiBTreeMapSink {
         &mut self,
         table_schemas: HashMap<TableId, TableSchema>,
     ) -> Result<(), SinkError> {
+        #[cfg(feature = "log")]
+        log::trace!("write_table_schemas: {:?}", table_schemas);
         for table_schema in table_schemas {
             let (table_id, schema) = table_schema;
             if let Some(sink) = self.sinks.get_mut(&table_id) {
