@@ -92,7 +92,6 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
             None
         } else {
             let mut replica = self.replica.write();
-            // TODO: not necessary to update seqno if no txn_clog
             for chg in self.txn_clog.drain(..) {
                 match chg {
                     Ok(t) => {
