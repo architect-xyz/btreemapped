@@ -110,7 +110,7 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
             Some((replica.seqid, replica.seqno))
         } {
             self.committed_lsn = commit_lsn;
-            let _ = self.replica.changed.send_replace((seqid, seqno));
+            let _ = self.replica.sequence.send_replace((seqid, seqno));
             if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
                 seqid,
                 seqno,
@@ -167,7 +167,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                 replica.seqno += 1;
                 (replica.seqid, replica.seqno)
             };
-            let _ = self.replica.changed.send_replace((seqid, seqno));
+            let _ = self.replica.sequence.send_replace((seqid, seqno));
             if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
                 seqid,
                 seqno,
@@ -247,7 +247,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
                 replica.seqno += 1;
                 (replica.seqid, replica.seqno)
             };
-            let _ = self.replica.changed.send_replace((seqid, seqno));
+            let _ = self.replica.sequence.send_replace((seqid, seqno));
             if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
                 seqid,
                 seqno,

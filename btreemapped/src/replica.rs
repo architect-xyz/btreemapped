@@ -80,7 +80,7 @@ impl<T> std::ops::DerefMut for Sequenced<T> {
 #[derive(Debug, Clone)]
 pub struct BTreeMapReplica<T: BTreeMapped<N>, const N: usize> {
     pub replica: Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T>>>>,
-    pub changed: watch::Sender<(u64, u64)>,
+    pub sequence: watch::Sender<(u64, u64)>,
     pub updates: broadcast::Sender<Arc<BTreeUpdate<T, N>>>,
     // If true, insert/remove directly to the replica will work; normally,
     // this should be false (signifying that this BTreeMapReplica is a
@@ -111,7 +111,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
                 seqno: 0,
                 t: BTreeMap::new(),
             })),
-            changed,
+            sequence: changed,
             updates,
             read_only_replica: true,
         }
@@ -144,7 +144,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             replica.seqno += 1;
             (i, replica.seqid, replica.seqno)
         };
-        let _ = self.changed.send_replace((seqid, seqno));
+        let _ = self.sequence.send_replace((seqid, seqno));
         let _ = self.updates.send(Arc::new(BTreeUpdate {
             seqid,
             seqno,
@@ -164,7 +164,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             replica.seqno += 1;
             (replica.seqid, replica.seqno)
         };
-        let _ = self.changed.send_replace((seqid, seqno));
+        let _ = self.sequence.send_replace((seqid, seqno));
         let _ = self.updates.send(Arc::new(BTreeUpdate {
             seqid,
             seqno,
@@ -235,7 +235,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         }
         replica.seqid = snap.seqid;
         replica.seqno = snap.seqno;
-        let _ = self.changed.send_replace((replica.seqid, replica.seqno));
+        let _ = self.sequence.send_replace((replica.seqid, replica.seqno));
         (replica.seqid, replica.seqno)
     }
 
@@ -273,7 +273,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             }
         }
         replica.seqno = up.seqno;
-        let _ = self.changed.send_replace((replica.seqid, replica.seqno));
+        let _ = self.sequence.send_replace((replica.seqid, replica.seqno));
         Ok((replica.seqid, replica.seqno))
     }
 
