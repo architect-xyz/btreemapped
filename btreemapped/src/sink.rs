@@ -88,8 +88,11 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
 
     fn commit(&mut self, commit_lsn: PgLsn) {
         let mut updates = vec![];
-        let (seqid, seqno) = {
+        if let Some((seqid, seqno)) = if self.txn_clog.is_empty() {
+            None
+        } else {
             let mut replica = self.replica.write();
+            // TODO: not necessary to update seqno if no txn_clog
             for chg in self.txn_clog.drain(..) {
                 match chg {
                     Ok(t) => {
@@ -104,17 +107,18 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
                 }
             }
             replica.seqno += 1;
-            (replica.seqid, replica.seqno)
-        };
-        self.committed_lsn = commit_lsn;
-        self.replica.changed.notify_waiters();
-        if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
-            seqid,
-            seqno,
-            snapshot: None,
-            updates,
-        })) {
-            // nobody listening, fine
+            Some((replica.seqid, replica.seqno))
+        } {
+            self.committed_lsn = commit_lsn;
+            self.replica.changed.notify_waiters();
+            if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
+                seqid,
+                seqno,
+                snapshot: None,
+                updates,
+            })) {
+                // nobody listening, fine
+            }
         }
     }
 }

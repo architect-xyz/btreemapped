@@ -128,16 +128,25 @@ impl Sink for MultiBTreeMapSink {
             CdcEvent::Insert((tid, _)) => {
                 if let Some(sink) = self.sinks.get_mut(&tid) {
                     sink.write_cdc_event(event).await?;
+                } else {
+                    #[cfg(feature = "log")]
+                    log::trace!("insert for unknown table_id: {}", tid);
                 }
             }
             CdcEvent::Update { table_id, .. } => {
                 if let Some(sink) = self.sinks.get_mut(&table_id) {
                     sink.write_cdc_event(event).await?;
+                } else {
+                    #[cfg(feature = "log")]
+                    log::trace!("update for unknown table_id: {}", table_id);
                 }
             }
             CdcEvent::Delete((tid, _)) => {
                 if let Some(sink) = self.sinks.get_mut(&tid) {
                     sink.write_cdc_event(event).await?;
+                } else {
+                    #[cfg(feature = "log")]
+                    log::trace!("delete for unknown table_id: {}", tid);
                 }
             }
             CdcEvent::Type(_) => {}
