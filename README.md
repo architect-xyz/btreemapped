@@ -13,3 +13,15 @@ todo:
 - Erase arity from the type somehow?
 - Pretty sure arity >= 2 iteration needs an additional bounds check
 - Use fully qualified name for LIndex* in btreemapped_derive, so users don't have to import it explicitly
+
+## Check WAL growth and replication status
+
+```
+SELECT 
+    slot_name,
+    confirmed_flush_lsn, 
+    pg_current_wal_lsn(), 
+    (pg_current_wal_lsn() - confirmed_flush_lsn) AS lsn_distance
+FROM 
+    pg_replication_slots;
+```

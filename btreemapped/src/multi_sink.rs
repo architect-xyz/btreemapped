@@ -118,6 +118,7 @@ impl Sink for MultiBTreeMapSink {
                         for sink in self.sinks.values_mut() {
                             sink.commit(commit_lsn);
                         }
+                        self.committed_lsn = commit_lsn;
                     } else {
                         Err(SinkError::IncorrectCommitLsn(commit_lsn, final_lsn))?
                     }
