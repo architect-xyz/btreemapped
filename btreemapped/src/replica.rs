@@ -174,6 +174,39 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok(())
     }
 
+    pub fn apply_write(&mut self, w: BTreeWrite<T, N>) -> Result<()> {
+        if self.read_only_replica {
+            bail!("cannot apply write to read-only replica");
+        }
+        let mut applied_updates = vec![];
+        let (seqid, seqno) = {
+            let mut replica = self.replica.write();
+            if let Some(upsert) = w.upsert {
+                for t in upsert {
+                    let i = t.index();
+                    applied_updates.push((i.clone(), Some(t.clone())));
+                    replica.insert(i.into(), t);
+                }
+            }
+            if let Some(delete) = w.delete {
+                for i in delete {
+                    applied_updates.push((i.clone(), None));
+                    replica.remove(&i.into());
+                }
+            }
+            replica.seqno += 1;
+            (replica.seqid, replica.seqno)
+        };
+        let _ = self.sequence.send_replace((seqid, seqno));
+        let _ = self.updates.send(Arc::new(BTreeUpdate {
+            seqid,
+            seqno,
+            snapshot: None,
+            updates: applied_updates,
+        }));
+        Ok(())
+    }
+
     pub fn snapshot(&self) -> BTreeSnapshot<T, N> {
         let replica = self.replica.read();
         let mut snapshot = vec![];
