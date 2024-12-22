@@ -127,13 +127,13 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
 
     /// Same as `insert` but ignores the `read_only_replica` flag.
     #[cfg(test)]
-    fn insert_for_test(&mut self, t: T) {
+    fn insert_for_test(&self, t: T) {
         let mut replica = self.replica.write();
         let i = t.index();
         replica.insert(i.into(), t);
     }
 
-    pub fn insert(&mut self, t: T) -> Result<()> {
+    pub fn insert(&self, t: T) -> Result<()> {
         if self.read_only_replica {
             bail!("cannot insert into read-only replica");
         }
@@ -154,7 +154,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok(())
     }
 
-    pub fn remove(&mut self, i: &T::Index) -> Result<()> {
+    pub fn remove(&self, i: &T::Index) -> Result<()> {
         if self.read_only_replica {
             bail!("cannot remove from read-only replica");
         }
@@ -174,7 +174,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok(())
     }
 
-    pub fn apply_write(&mut self, w: BTreeWrite<T, N>) -> Result<()> {
+    pub fn apply_write(&self, w: BTreeWrite<T, N>) -> Result<()> {
         if self.read_only_replica {
             bail!("cannot apply write to read-only replica");
         }
