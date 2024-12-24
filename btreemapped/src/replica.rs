@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn test_btreemap_replica1() {
-        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new(0);
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new(0);
         replica.insert_for_test(Foo::new("abc", None));
         replica.insert_for_test(Foo::new(
             "def",
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn test_btreemap_replica2() {
-        let mut replica: BTreeMapReplica<Car, 2> = BTreeMapReplica::new(0);
+        let replica: BTreeMapReplica<Car, 2> = BTreeMapReplica::new(0);
         replica.insert_for_test(Car::new("Alice", 123, "abc"));
         replica.insert_for_test(Car::new("Charlie", 1000, "ghi"));
         replica.insert_for_test(Car::new("Charlie", 1001, "ghi"));
