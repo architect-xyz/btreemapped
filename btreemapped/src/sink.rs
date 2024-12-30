@@ -142,7 +142,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
         for (id, schema) in table_schemas {
             #[cfg(feature = "log")]
             log::trace!("write_table_schemas: {:?}", schema);
-            if schema.table_name.name == self.table_name {
+            if schema.table_name.to_string() == self.table_name {
                 self.table_id = Some(id);
                 self.table_schema = Some(schema);
             }
