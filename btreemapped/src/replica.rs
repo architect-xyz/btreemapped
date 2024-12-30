@@ -154,6 +154,33 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok(())
     }
 
+    pub fn update(&self, i: &T::Index, f: impl FnOnce(T) -> Result<T>) -> Result<()> {
+        if self.read_only_replica {
+            bail!("cannot insert into read-only replica");
+        }
+        if let Some((i, t_new, seqid, seqno)) = {
+            let mut replica = self.replica.write();
+            match replica.remove(&i.clone().into()) {
+                Some(t) => {
+                    let t_new = f(t)?;
+                    replica.insert(i.clone().into(), t_new.clone());
+                    replica.seqno += 1;
+                    Some((i.clone(), t_new, replica.seqid, replica.seqno))
+                }
+                None => None,
+            }
+        } {
+            let _ = self.sequence.send_replace((seqid, seqno));
+            let _ = self.updates.send(Arc::new(BTreeUpdate {
+                seqid,
+                seqno,
+                snapshot: None,
+                updates: vec![(i, Some(t_new))],
+            }));
+        }
+        Ok(())
+    }
+
     pub fn remove(&self, i: &T::Index) -> Result<()> {
         if self.read_only_replica {
             bail!("cannot remove from read-only replica");
