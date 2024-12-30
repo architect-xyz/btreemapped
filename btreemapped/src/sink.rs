@@ -8,7 +8,7 @@ use pg_replicate::{
         sinks::{Sink, SinkError},
         PipelineResumptionState,
     },
-    table::{TableId, TableSchema},
+    table::{TableId, TableName, TableSchema},
     tokio_postgres::types::PgLsn,
 };
 use std::{
@@ -142,7 +142,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
         for (id, schema) in table_schemas {
             #[cfg(feature = "log")]
             log::trace!("write_table_schemas: {:?}", schema);
-            if schema.table_name.to_string() == self.table_name {
+            if normalized_table_name(&schema.table_name) == self.table_name {
                 self.table_id = Some(id);
                 self.table_schema = Some(schema);
             }
@@ -271,5 +271,15 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
             }
         }
         Ok(())
+    }
+}
+
+/// Assuming the default schema is "public", normalize a full
+/// {schema}.{table} name by omitting the default schema.
+pub(crate) fn normalized_table_name(table_name: &TableName) -> String {
+    if table_name.schema == "public" {
+        table_name.name.to_string()
+    } else {
+        table_name.to_string()
     }
 }

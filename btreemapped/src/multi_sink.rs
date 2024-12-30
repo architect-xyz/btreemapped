@@ -2,7 +2,10 @@
 // really, this is the primary sink, don't center the world around
 // the sink table case
 
-use crate::{sink::ErasedBTreeMapSink, BTreeMapReplica, BTreeMapSink, BTreeMapped};
+use crate::{
+    sink::{normalized_table_name, ErasedBTreeMapSink},
+    BTreeMapReplica, BTreeMapSink, BTreeMapped,
+};
 use async_trait::async_trait;
 use pg_replicate::{
     conversions::{cdc_event::CdcEvent, table_row::TableRow},
@@ -72,7 +75,7 @@ impl Sink for MultiBTreeMapSink {
         log::trace!("write_table_schemas: {:?}", table_schemas);
         for table_schema in table_schemas {
             let (table_id, schema) = table_schema;
-            let table_name = schema.table_name.to_string();
+            let table_name = normalized_table_name(&schema.table_name);
             if let Some(sink) = self.sinks.get_mut(&table_id) {
                 sink.set_table_id_and_schema(table_id, schema);
             } else if let Some(mut sink) = self.pending_sinks.remove(&table_name) {
