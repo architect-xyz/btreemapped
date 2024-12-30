@@ -72,12 +72,10 @@ impl Sink for MultiBTreeMapSink {
         log::trace!("write_table_schemas: {:?}", table_schemas);
         for table_schema in table_schemas {
             let (table_id, schema) = table_schema;
+            let table_name = schema.table_name.to_string();
             if let Some(sink) = self.sinks.get_mut(&table_id) {
                 sink.set_table_id_and_schema(table_id, schema);
-            } else if let Some(mut sink) =
-                self.pending_sinks.remove(&schema.table_name.name)
-            {
-                let table_name = schema.table_name.name.clone();
+            } else if let Some(mut sink) = self.pending_sinks.remove(&table_name) {
                 #[cfg(feature = "log")]
                 log::debug!(
                     "table {} sink assigned, table_id = {}",
