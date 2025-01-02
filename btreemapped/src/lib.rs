@@ -12,7 +12,9 @@ pub mod sink;
 pub use btreemapped_derive::{BTreeMapped, PgSchema};
 pub use lvalue::*;
 pub use multi_sink::MultiBTreeMapSink;
-pub use replica::{BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate};
+pub use replica::{
+    BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
+};
 pub use sink::BTreeMapSink;
 
 pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
