@@ -337,6 +337,15 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok((replica.seqid, replica.seqno))
     }
 
+    pub fn contains_key<Q>(&self, i: Q) -> bool
+    where
+        Q: Into<T::LIndex>,
+    {
+        let i: T::LIndex = i.into();
+        let replica = self.replica.read();
+        replica.contains_key(&i)
+    }
+
     pub fn get<Q>(&self, i: Q) -> Option<MappedRwLockReadGuard<T>>
     where
         Q: Into<T::LIndex>,
