@@ -169,7 +169,7 @@ impl<T: BTreeMapped<N>, const N: usize> BatchSink for BTreeMapSink<T, N> {
         table_id: TableId,
     ) -> Result<(), Self::Error> {
         #[cfg(feature = "log")]
-        log::trace!("write_table_row to table {table_id}: {:?}", row);
+        log::trace!("write_table_rows to table {table_id}: {} rows", rows.len());
         if self.table_id.is_some_and(|id| id == table_id) {
             let schema = self.table_schema.as_ref().unwrap();
             for row in rows {
