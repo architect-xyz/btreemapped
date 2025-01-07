@@ -9,7 +9,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     derive_btreemapped::derive_btreemapped(input)
 }
 
-#[proc_macro_derive(PgSchema, attributes(btreemap, pg_type, try_from))]
+#[proc_macro_derive(PgSchema, attributes(btreemap, pg_type, skip, try_from))]
 pub fn derive_pg_schema(input: TokenStream) -> TokenStream {
     derive_pg_schema::derive_pg_schema(input)
 }

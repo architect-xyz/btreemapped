@@ -38,6 +38,9 @@ pub fn derive_pg_schema(input: TokenStream) -> TokenStream {
     let mut all_fields_pg_types = vec![];
 
     for field in fields {
+        if field.attrs.iter().any(|attr| attr.path().is_ident("skip")) {
+            continue;
+        }
         let name = field.ident.clone().expect("Expected named fields");
         all_fields_idents.push(name.clone());
         all_fields_names.push(name.to_string());

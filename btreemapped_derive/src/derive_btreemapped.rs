@@ -143,7 +143,8 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                 // use an intermediate type to convert from SQL
                 quote! {
                     #name_str => {
-                        let _i = TryInto::<#try_from_ty>::try_into(v)?;
+                        let _i = TryInto::<#try_from_ty>::try_into(v)
+                            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
                         #name = Some(_i.try_into()?);
                     }
                 }
@@ -155,6 +156,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         quote! {
                             #name_str => {
                                 let _i = TryInto::<Option<String>>::try_into(v)
+                                    .map_err(|e| anyhow::anyhow!("{e:?}"))
                                     .with_context(|| format!("while converting column \"{}\" to Option<String>", #name_str))?;
                                 match _i {
                                     Some(s) => {
@@ -172,6 +174,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         quote! {
                             #name_str => {
                                 let _i = TryInto::<String>::try_into(v)
+                                    .map_err(|e| anyhow::anyhow!("{e:?}"))
                                     .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
                                 #name = Some(
                                     _i.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
@@ -185,6 +188,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         quote! {
                             #name_str => {
                                 let _i = TryInto::<Option<Vec<u8>>>::try_into(v)
+                                    .map_err(|e| anyhow::anyhow!("{e:?}"))
                                     .with_context(|| format!("while converting column \"{}\" to Option<Vec<u8>>", #name_str))?;
                                 match _i {
                                     Some(b) => {
@@ -203,6 +207,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         quote! {
                             #name_str => {
                                 let _i = TryInto::<Vec<u8>>::try_into(v)
+                                    .map_err(|e| anyhow::anyhow!("{e:?}"))
                                     .with_context(|| format!("while converting column \"{}\" to Vec<u8>", #name_str))?;
                                 let _s = std::str::from_utf8(&_i)?;
                                 #name = Some(
@@ -215,7 +220,11 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                     // normal TryInto conversion
                     quote! {
                         #name_str => {
-                            #name = Some(v.try_into().with_context(|| format!("while converting column \"{}\"", #name_str))?);
+                            #name = Some(
+                                v.try_into()
+                                 .map_err(|e| anyhow::anyhow!("{e:?}"))
+                                 .with_context(|| format!("while converting column \"{}\"", #name_str))?
+                            );
                         }
                     }
                 }

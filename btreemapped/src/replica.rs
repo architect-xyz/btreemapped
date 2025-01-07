@@ -426,6 +426,7 @@ mod tests {
     #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["owner", "license_plate"])]
     struct Car {
+        #[try_from(String)]
         owner: Cow<'static, str>,
         license_plate: i64,
         key: String,

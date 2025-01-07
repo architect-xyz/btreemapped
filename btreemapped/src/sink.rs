@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use pg_replicate::{
     conversions::{cdc_event::CdcEvent, table_row::TableRow},
     pipeline::{
-        sinks::{Sink, SinkError},
+        sinks::{BatchSink, SinkError},
         PipelineResumptionState,
     },
     table::{TableId, TableName, TableSchema},
@@ -15,6 +15,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+use thiserror::Error;
 
 pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
     pub replica: BTreeMapReplica<T, N>,
@@ -43,6 +44,16 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
         }
     }
 }
+
+#[derive(Debug, Error)]
+pub enum BTreeMapSinkError {
+    #[error("incorrect commit lsn: {0} (expected: {0})")]
+    IncorrectCommitLsn(PgLsn, PgLsn),
+    #[error("commit message without begin message")]
+    CommitWithoutBegin,
+}
+
+impl SinkError for BTreeMapSinkError {}
 
 fn parse_row<T: BTreeMapped<N>, const N: usize>(
     schema: &TableSchema,
@@ -75,7 +86,7 @@ fn parse_row_index<T: BTreeMapped<N>, const N: usize>(
 // MultiBTreeMapSink need to be able to manipulate the inner state
 // of the individual sinks; also erase the types so we can put them
 // in Box<dyn>s.
-pub(crate) trait ErasedBTreeMapSink: Sink + Send {
+pub(crate) trait ErasedBTreeMapSink: BatchSink + Send {
     fn set_table_id_and_schema(&mut self, table_id: TableId, schema: TableSchema);
     fn commit(&mut self, commit_lsn: PgLsn);
 }
@@ -125,10 +136,12 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
 
 // CR alee: implement BatchSink
 #[async_trait]
-impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
+impl<T: BTreeMapped<N>, const N: usize> BatchSink for BTreeMapSink<T, N> {
+    type Error = BTreeMapSinkError;
+
     async fn get_resumption_state(
         &mut self,
-    ) -> Result<PipelineResumptionState, SinkError> {
+    ) -> Result<PipelineResumptionState, Self::Error> {
         Ok(PipelineResumptionState {
             copied_tables: self.committed_tables.clone(),
             last_lsn: self.committed_lsn,
@@ -138,7 +151,7 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
     async fn write_table_schemas(
         &mut self,
         table_schemas: HashMap<TableId, TableSchema>,
-    ) -> Result<(), SinkError> {
+    ) -> Result<(), Self::Error> {
         for (id, schema) in table_schemas {
             #[cfg(feature = "log")]
             log::trace!("write_table_schemas: {:?}", schema);
@@ -150,109 +163,118 @@ impl<T: BTreeMapped<N>, const N: usize> Sink for BTreeMapSink<T, N> {
         Ok(())
     }
 
-    async fn write_table_row(
+    async fn write_table_rows(
         &mut self,
-        row: TableRow,
+        rows: Vec<TableRow>,
         table_id: TableId,
-    ) -> Result<(), SinkError> {
+    ) -> Result<(), Self::Error> {
         #[cfg(feature = "log")]
         log::trace!("write_table_row to table {table_id}: {:?}", row);
         if self.table_id.is_some_and(|id| id == table_id) {
             let schema = self.table_schema.as_ref().unwrap();
-            if let Some(t) = parse_row::<T, N>(schema, row) {
-                let index = t.index();
-                let (seqid, seqno) = {
-                    let mut replica = self.replica.write();
-                    replica.insert(index.clone().into(), t.clone());
-                    replica.seqno += 1;
-                    (replica.seqid, replica.seqno)
-                };
-                let _ = self.replica.sequence.send_replace((seqid, seqno));
-                if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
-                    seqid,
-                    seqno,
-                    snapshot: None,
-                    updates: vec![(index, Some(t))],
-                })) {
-                    // nobody listening, fine
+            for row in rows {
+                if let Some(t) = parse_row::<T, N>(schema, row) {
+                    let index = t.index();
+                    let (seqid, seqno) = {
+                        let mut replica = self.replica.write();
+                        replica.insert(index.clone().into(), t.clone());
+                        replica.seqno += 1;
+                        (replica.seqid, replica.seqno)
+                    };
+                    let _ = self.replica.sequence.send_replace((seqid, seqno));
+                    if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
+                        seqid,
+                        seqno,
+                        snapshot: None,
+                        updates: vec![(index, Some(t))],
+                    })) {
+                        // nobody listening, fine
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    async fn write_cdc_event(&mut self, event: CdcEvent) -> Result<PgLsn, SinkError> {
-        #[cfg(feature = "log")]
-        log::trace!("write_cdc_event: {:?}", event);
-        match event {
-            CdcEvent::Begin(begin) => {
-                let final_lsn_u64 = begin.final_lsn();
-                self.txn_lsn = Some(final_lsn_u64.into());
-            }
-            CdcEvent::Commit(commit) => {
-                let commit_lsn: PgLsn = commit.commit_lsn().into();
-                if let Some(final_lsn) = self.txn_lsn {
-                    if commit_lsn == final_lsn {
-                        self.commit(commit_lsn);
-                    } else {
-                        Err(SinkError::IncorrectCommitLsn(commit_lsn, final_lsn))?
-                    }
-                } else {
-                    Err(SinkError::CommitWithoutBegin)?
+    async fn write_cdc_events(
+        &mut self,
+        events: Vec<CdcEvent>,
+    ) -> Result<PgLsn, Self::Error> {
+        for event in events {
+            #[cfg(feature = "log")]
+            log::trace!("write_cdc_event: {:?}", event);
+            match event {
+                CdcEvent::Begin(begin) => {
+                    let final_lsn_u64 = begin.final_lsn();
+                    self.txn_lsn = Some(final_lsn_u64.into());
                 }
-            }
-            CdcEvent::Insert((tid, row)) => {
-                if self.table_id.is_some_and(|id| id == tid) {
-                    let schema = self.table_schema.as_ref().unwrap();
-                    if let Some(t) = parse_row::<T, N>(schema, row) {
-                        self.txn_clog.push(Ok(t));
-                    }
-                }
-            }
-            CdcEvent::Update { table_id, old_row: _, key_row, row } => {
-                if self.table_id.is_some_and(|id| id == table_id) {
-                    let schema = self.table_schema.as_ref().unwrap();
-                    let mut index = Ok(None);
-                    if let Some(key) = key_row {
-                        if let Some(i) = parse_row_index::<T, N>(schema, key) {
-                            index = Ok(Some(i));
+                CdcEvent::Commit(commit) => {
+                    let commit_lsn: PgLsn = commit.commit_lsn().into();
+                    if let Some(final_lsn) = self.txn_lsn {
+                        if commit_lsn == final_lsn {
+                            self.commit(commit_lsn);
                         } else {
-                            index = Err(());
+                            Err(BTreeMapSinkError::IncorrectCommitLsn(
+                                commit_lsn, final_lsn,
+                            ))?
                         }
+                    } else {
+                        Err(BTreeMapSinkError::CommitWithoutBegin)?
                     }
-                    if let Ok(index) = index {
+                }
+                CdcEvent::Insert((tid, row)) => {
+                    if self.table_id.is_some_and(|id| id == tid) {
+                        let schema = self.table_schema.as_ref().unwrap();
                         if let Some(t) = parse_row::<T, N>(schema, row) {
-                            if let Some(i) = index {
-                                self.txn_clog.push(Err(i));
-                            }
                             self.txn_clog.push(Ok(t));
                         }
                     }
                 }
-            }
-            CdcEvent::Delete((tid, row)) => {
-                if self.table_id.is_some_and(|id| id == tid) {
-                    let schema = self.table_schema.as_ref().unwrap();
-                    if let Some(i) = parse_row_index::<T, N>(schema, row) {
-                        self.txn_clog.push(Err(i));
+                CdcEvent::Update { table_id, old_row: _, key_row, row } => {
+                    if self.table_id.is_some_and(|id| id == table_id) {
+                        let schema = self.table_schema.as_ref().unwrap();
+                        let mut index = Ok(None);
+                        if let Some(key) = key_row {
+                            if let Some(i) = parse_row_index::<T, N>(schema, key) {
+                                index = Ok(Some(i));
+                            } else {
+                                index = Err(());
+                            }
+                        }
+                        if let Ok(index) = index {
+                            if let Some(t) = parse_row::<T, N>(schema, row) {
+                                if let Some(i) = index {
+                                    self.txn_clog.push(Err(i));
+                                }
+                                self.txn_clog.push(Ok(t));
+                            }
+                        }
                     }
                 }
+                CdcEvent::Delete((tid, row)) => {
+                    if self.table_id.is_some_and(|id| id == tid) {
+                        let schema = self.table_schema.as_ref().unwrap();
+                        if let Some(i) = parse_row_index::<T, N>(schema, row) {
+                            self.txn_clog.push(Err(i));
+                        }
+                    }
+                }
+                CdcEvent::Type(_) => {}
+                CdcEvent::Relation(_) => {}
+                CdcEvent::KeepAliveRequested { reply: _ } => {}
             }
-            CdcEvent::Type(_) => {}
-            CdcEvent::Relation(_) => {}
-            CdcEvent::KeepAliveRequested { reply: _ } => {}
         }
         #[cfg(feature = "log")]
         log::trace!("committed_lsn: {}", self.committed_lsn);
         Ok(self.committed_lsn)
     }
 
-    async fn table_copied(&mut self, table_id: TableId) -> Result<(), SinkError> {
+    async fn table_copied(&mut self, table_id: TableId) -> Result<(), Self::Error> {
         self.committed_tables.insert(table_id);
         Ok(())
     }
 
-    async fn truncate_table(&mut self, table_id: TableId) -> Result<(), SinkError> {
+    async fn truncate_table(&mut self, table_id: TableId) -> Result<(), Self::Error> {
         if self.table_id.is_some_and(|id| id == table_id) {
             let (seqid, seqno) = {
                 let mut replica = self.replica.write();

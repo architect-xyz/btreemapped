@@ -3,24 +3,22 @@
 // the sink table case
 
 use crate::{
-    sink::{normalized_table_name, ErasedBTreeMapSink},
+    sink::{normalized_table_name, BTreeMapSinkError, ErasedBTreeMapSink},
     BTreeMapReplica, BTreeMapSink, BTreeMapped,
 };
 use async_trait::async_trait;
 use pg_replicate::{
     conversions::{cdc_event::CdcEvent, table_row::TableRow},
-    pipeline::{
-        sinks::{Sink, SinkError},
-        PipelineResumptionState,
-    },
+    pipeline::{sinks::BatchSink, PipelineResumptionState},
     table::{TableId, TableSchema},
     tokio_postgres::types::PgLsn,
 };
 use std::collections::{HashMap, HashSet};
 
 pub struct MultiBTreeMapSink {
-    sinks: HashMap<TableId, Box<dyn ErasedBTreeMapSink>>,
-    pending_sinks: HashMap<String, Box<dyn ErasedBTreeMapSink>>,
+    sinks: HashMap<TableId, Box<dyn ErasedBTreeMapSink<Error = BTreeMapSinkError>>>,
+    pending_sinks:
+        HashMap<String, Box<dyn ErasedBTreeMapSink<Error = BTreeMapSinkError>>>,
     table_ids: HashMap<String, TableId>,
     committed_tables: HashSet<TableId>,
     committed_lsn: PgLsn,
@@ -57,10 +55,12 @@ impl MultiBTreeMapSink {
 }
 
 #[async_trait]
-impl Sink for MultiBTreeMapSink {
+impl BatchSink for MultiBTreeMapSink {
+    type Error = BTreeMapSinkError;
+
     async fn get_resumption_state(
         &mut self,
-    ) -> Result<PipelineResumptionState, SinkError> {
+    ) -> Result<PipelineResumptionState, Self::Error> {
         Ok(PipelineResumptionState {
             copied_tables: self.committed_tables.clone(),
             last_lsn: self.committed_lsn,
@@ -70,7 +70,7 @@ impl Sink for MultiBTreeMapSink {
     async fn write_table_schemas(
         &mut self,
         table_schemas: HashMap<TableId, TableSchema>,
-    ) -> Result<(), SinkError> {
+    ) -> Result<(), Self::Error> {
         #[cfg(feature = "log")]
         log::trace!("write_table_schemas: {:?}", table_schemas);
         for table_schema in table_schemas {
@@ -93,86 +93,95 @@ impl Sink for MultiBTreeMapSink {
         Ok(())
     }
 
-    async fn write_table_row(
+    async fn write_table_rows(
         &mut self,
-        row: TableRow,
+        rows: Vec<TableRow>,
         table_id: TableId,
-    ) -> Result<(), SinkError> {
+    ) -> Result<(), Self::Error> {
         if let Some(sink) = self.sinks.get_mut(&table_id) {
-            sink.write_table_row(row, table_id).await?;
+            sink.write_table_rows(rows, table_id).await?;
         }
         Ok(())
     }
 
-    async fn write_cdc_event(&mut self, event: CdcEvent) -> Result<PgLsn, SinkError> {
-        #[cfg(feature = "log")]
-        log::trace!("write_cdc_event: {:?}", event);
-        match event {
-            CdcEvent::Begin(begin) => {
-                let final_lsn_u64 = begin.final_lsn();
-                self.txn_lsn = Some(final_lsn_u64.into());
-            }
-            CdcEvent::Commit(commit) => {
-                let commit_lsn: PgLsn = commit.commit_lsn().into();
-                if let Some(final_lsn) = self.txn_lsn {
-                    if commit_lsn == final_lsn {
-                        for sink in self.sinks.values_mut() {
-                            sink.commit(commit_lsn);
+    async fn write_cdc_events(
+        &mut self,
+        events: Vec<CdcEvent>,
+    ) -> Result<PgLsn, Self::Error> {
+        // CR alee: this could be more efficient by batching runs of CDC events
+        // that are contiguous for the same table/sink.
+        for event in events {
+            #[cfg(feature = "log")]
+            log::trace!("write_cdc_event: {:?}", event);
+            match event {
+                CdcEvent::Begin(begin) => {
+                    let final_lsn_u64 = begin.final_lsn();
+                    self.txn_lsn = Some(final_lsn_u64.into());
+                }
+                CdcEvent::Commit(commit) => {
+                    let commit_lsn: PgLsn = commit.commit_lsn().into();
+                    if let Some(final_lsn) = self.txn_lsn {
+                        if commit_lsn == final_lsn {
+                            for sink in self.sinks.values_mut() {
+                                sink.commit(commit_lsn);
+                            }
+                            self.committed_lsn = commit_lsn;
+                        } else {
+                            Err(BTreeMapSinkError::IncorrectCommitLsn(
+                                commit_lsn, final_lsn,
+                            ))?
                         }
-                        self.committed_lsn = commit_lsn;
                     } else {
-                        Err(SinkError::IncorrectCommitLsn(commit_lsn, final_lsn))?
+                        Err(BTreeMapSinkError::CommitWithoutBegin)?
                     }
-                } else {
-                    Err(SinkError::CommitWithoutBegin)?
                 }
-            }
-            CdcEvent::Insert((tid, _)) => {
-                if let Some(sink) = self.sinks.get_mut(&tid) {
-                    sink.write_cdc_event(event).await?;
-                } else {
-                    #[cfg(feature = "log")]
-                    log::trace!(
-                        "insert for unknown table_id: {}, known tables are: {:?}",
-                        tid,
-                        self.table_ids
-                    );
+                CdcEvent::Insert((tid, _)) => {
+                    if let Some(sink) = self.sinks.get_mut(&tid) {
+                        sink.write_cdc_events(vec![event]).await?;
+                    } else {
+                        #[cfg(feature = "log")]
+                        log::trace!(
+                            "insert for unknown table_id: {}, known tables are: {:?}",
+                            tid,
+                            self.table_ids
+                        );
+                    }
                 }
-            }
-            CdcEvent::Update { table_id, .. } => {
-                if let Some(sink) = self.sinks.get_mut(&table_id) {
-                    sink.write_cdc_event(event).await?;
-                } else {
-                    #[cfg(feature = "log")]
-                    log::trace!(
-                        "update for unknown table_id: {}, known tables are: {:?}",
-                        table_id,
-                        self.table_ids
-                    );
+                CdcEvent::Update { table_id, .. } => {
+                    if let Some(sink) = self.sinks.get_mut(&table_id) {
+                        sink.write_cdc_events(vec![event]).await?;
+                    } else {
+                        #[cfg(feature = "log")]
+                        log::trace!(
+                            "update for unknown table_id: {}, known tables are: {:?}",
+                            table_id,
+                            self.table_ids
+                        );
+                    }
                 }
-            }
-            CdcEvent::Delete((tid, _)) => {
-                if let Some(sink) = self.sinks.get_mut(&tid) {
-                    sink.write_cdc_event(event).await?;
-                } else {
-                    #[cfg(feature = "log")]
-                    log::trace!(
-                        "delete for unknown table_id: {}, known tables are: {:?}",
-                        tid,
-                        self.table_ids
-                    );
+                CdcEvent::Delete((tid, _)) => {
+                    if let Some(sink) = self.sinks.get_mut(&tid) {
+                        sink.write_cdc_events(vec![event]).await?;
+                    } else {
+                        #[cfg(feature = "log")]
+                        log::trace!(
+                            "delete for unknown table_id: {}, known tables are: {:?}",
+                            tid,
+                            self.table_ids
+                        );
+                    }
                 }
+                CdcEvent::Type(_) => {}
+                CdcEvent::Relation(_) => {}
+                CdcEvent::KeepAliveRequested { reply: _ } => {}
             }
-            CdcEvent::Type(_) => {}
-            CdcEvent::Relation(_) => {}
-            CdcEvent::KeepAliveRequested { reply: _ } => {}
         }
         #[cfg(feature = "log")]
         log::trace!("committed_lsn: {}", self.committed_lsn);
         Ok(self.committed_lsn)
     }
 
-    async fn table_copied(&mut self, table_id: TableId) -> Result<(), SinkError> {
+    async fn table_copied(&mut self, table_id: TableId) -> Result<(), Self::Error> {
         if let Some(sink) = self.sinks.get_mut(&table_id) {
             sink.table_copied(table_id).await?;
         }
@@ -180,7 +189,7 @@ impl Sink for MultiBTreeMapSink {
         Ok(())
     }
 
-    async fn truncate_table(&mut self, table_id: TableId) -> Result<(), SinkError> {
+    async fn truncate_table(&mut self, table_id: TableId) -> Result<(), Self::Error> {
         if let Some(sink) = self.sinks.get_mut(&table_id) {
             sink.truncate_table(table_id).await?;
         }
