@@ -183,7 +183,6 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         }
                     }
                 } else if field_enum.contains(name) {
-                    // convert from Vec<u8> to String, then parse from String
                     if is_option_type(ty) {
                         quote! {
                             #name_str => {
