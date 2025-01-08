@@ -187,14 +187,13 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                     if is_option_type(ty) {
                         quote! {
                             #name_str => {
-                                let _i = TryInto::<Option<Vec<u8>>>::try_into(v)
+                                let _s = TryInto::<Option<String>>::try_into(v)
                                     .map_err(|e| anyhow::anyhow!("{e:?}"))
-                                    .with_context(|| format!("while converting column \"{}\" to Option<Vec<u8>>", #name_str))?;
-                                match _i {
-                                    Some(b) => {
-                                        let _s = std::str::from_utf8(&b)?;
+                                    .with_context(|| format!("while converting column \"{}\" to Option<String>", #name_str))?;
+                                match _s {
+                                    Some(s) => {
                                         #name = Some(Some(
-                                            _s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                            s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
                                         ));
                                     }
                                     None => {
@@ -206,10 +205,9 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                     } else {
                         quote! {
                             #name_str => {
-                                let _i = TryInto::<Vec<u8>>::try_into(v)
+                                let _s = TryInto::<String>::try_into(v)
                                     .map_err(|e| anyhow::anyhow!("{e:?}"))
-                                    .with_context(|| format!("while converting column \"{}\" to Vec<u8>", #name_str))?;
-                                let _s = std::str::from_utf8(&_i)?;
+                                    .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
                                 #name = Some(
                                     _s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
                                 );
