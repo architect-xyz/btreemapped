@@ -172,25 +172,27 @@ impl<T: BTreeMapped<N>, const N: usize> BatchSink for BTreeMapSink<T, N> {
         log::trace!("write_table_rows to table {table_id}: {} rows", rows.len());
         if self.table_id.is_some_and(|id| id == table_id) {
             let schema = self.table_schema.as_ref().unwrap();
-            for row in rows {
-                if let Some(t) = parse_row::<T, N>(schema, row) {
-                    let index = t.index();
-                    let (seqid, seqno) = {
-                        let mut replica = self.replica.write();
+            let mut updates = vec![];
+            let (seqid, seqno) = {
+                let mut replica = self.replica.write();
+                for row in rows {
+                    if let Some(t) = parse_row::<T, N>(schema, row) {
+                        let index = t.index();
                         replica.insert(index.clone().into(), t.clone());
-                        replica.seqno += 1;
-                        (replica.seqid, replica.seqno)
-                    };
-                    let _ = self.replica.sequence.send_replace((seqid, seqno));
-                    if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
-                        seqid,
-                        seqno,
-                        snapshot: None,
-                        updates: vec![(index, Some(t))],
-                    })) {
-                        // nobody listening, fine
+                        updates.push((index, Some(t)));
                     }
                 }
+                replica.seqno += 1;
+                (replica.seqid, replica.seqno)
+            };
+            let _ = self.replica.sequence.send_replace((seqid, seqno));
+            if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
+                seqid,
+                seqno,
+                snapshot: None,
+                updates,
+            })) {
+                // nobody listening, fine
             }
         }
         Ok(())
