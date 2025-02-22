@@ -194,6 +194,7 @@ impl<T: BTreeMapped<N>, const N: usize> BatchSink for BTreeMapSink<T, N> {
             })) {
                 // nobody listening, fine
             }
+            tokio::task::yield_now().await;
         }
         Ok(())
     }
