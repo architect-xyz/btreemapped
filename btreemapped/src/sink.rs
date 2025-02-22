@@ -194,6 +194,9 @@ impl<T: BTreeMapped<N>, const N: usize> BatchSink for BTreeMapSink<T, N> {
             })) {
                 // nobody listening, fine
             }
+            // let consumers catch up
+            // CR alee: possibly we could make this more efficient by tuning when we
+            // yield to the size of our bcast channel? not sure if that's true...
             tokio::task::yield_now().await;
         }
         Ok(())
@@ -216,6 +219,8 @@ impl<T: BTreeMapped<N>, const N: usize> BatchSink for BTreeMapSink<T, N> {
                     if let Some(final_lsn) = self.txn_lsn {
                         if commit_lsn == final_lsn {
                             self.commit(commit_lsn);
+                            // let consumers catch up
+                            tokio::task::yield_now().await;
                         } else {
                             Err(BTreeMapSinkError::IncorrectCommitLsn(
                                 commit_lsn, final_lsn,
