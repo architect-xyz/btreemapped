@@ -58,9 +58,11 @@ pub fn derive_pg_schema(input: TokenStream) -> TokenStream {
 
     let num_fields = all_fields_idents.len();
 
+    let (impl_generics, ty_generics, where_generics) = input.generics.split_for_impl();
+
     // Generate the impl block for BTreeMapped
     let impl_block = quote! {
-        impl PgSchema for #struct_name {
+        impl #impl_generics PgSchema for #struct_name #ty_generics #where_generics {
             fn column_names() -> impl ExactSizeIterator<Item = &'static str> {
                 [
                     #(#all_fields_names),*
