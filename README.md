@@ -14,6 +14,22 @@ todo:
 - Pretty sure arity >= 2 iteration needs an additional bounds check
 - Use fully qualified name for LIndex* in btreemapped_derive, so users don't have to import it explicitly
 
+## Running the examples
+
+```bash
+# start a postgres
+docker compose up
+
+# setup the example table and publication
+psql -d "host=localhost port=54320 user=postgres password=postgres" -f ./example.sql
+
+# run the replication example
+cargo run --example basic
+
+# connect to the database and insert/delete rows
+# observe the output of the example
+```
+
 ## Check WAL growth and replication status
 
 ```

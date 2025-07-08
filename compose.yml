@@ -1,0 +1,11 @@
+services:
+  # connect to this database with:
+  # postgresql://postgres:postgres@localhost:54320
+  postgres:
+    image: "postgres:16-alpine"
+    command: ["postgres", "-c", "wal_level=logical"]
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "54320:5432"
