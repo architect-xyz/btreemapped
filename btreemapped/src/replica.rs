@@ -303,14 +303,14 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     /// on every BTreeUpdate received.
     pub fn apply_update(
         &mut self,
-        up: BTreeUpdate<T, N>,
+        up: Arc<BTreeUpdate<T, N>>,
     ) -> Result<(u64, u64), BTreeMapSyncError> {
         let mut replica = self.replica.write();
-        if let Some(snapshot) = up.snapshot {
+        if let Some(snapshot) = &up.snapshot {
             replica.clear();
             for t in snapshot {
                 let i = t.index();
-                replica.insert(i.into(), t);
+                replica.insert(i.into(), t.clone());
             }
             replica.seqid = up.seqid;
             replica.seqno = up.seqno;
@@ -322,10 +322,11 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
                 return Err(BTreeMapSyncError::SeqnoSkip);
             }
         }
-        for (i, t) in up.updates {
+        for (i, t) in &up.updates {
+            let i = i.clone();
             match t {
                 Some(t) => {
-                    replica.insert(i.into(), t);
+                    replica.insert(i.into(), t.clone());
                 }
                 None => {
                     replica.remove(&i.into());
@@ -334,6 +335,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         }
         replica.seqno = up.seqno;
         let _ = self.sequence.send_replace((replica.seqid, replica.seqno));
+        let _ = self.updates.send(up);
         Ok((replica.seqid, replica.seqno))
     }
 
