@@ -36,3 +36,6 @@ tokio = { workspace = true }
 [dev-dependencies]
 chrono = { workspace = true }
 postgres-types = { workspace = true, features = ["with-chrono-0_4"] }
+testcontainers = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tokio-postgres = { workspace = true }
