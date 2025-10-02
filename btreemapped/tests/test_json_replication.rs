@@ -1,5 +1,5 @@
 use anyhow::Result;
-use btreemapped::{BTreeMapSink, BTreeMapped, Json, LIndex1, PgSchema};
+use btreemapped::{BTreeMapSink, BTreeMapped, LIndex1, PgJson, PgSchema};
 use btreemapped_derive::{BTreeMapped, PgSchema};
 use pg_replicate::pipeline::{
     batching::{data_pipeline::BatchDataPipeline, BatchConfig},
@@ -22,7 +22,7 @@ pub struct JsonRecord {
     pub name: Option<String>,
     #[pg_type(Type::JSON)]
     #[try_from_json]
-    pub data: Json<BTreeMap<String, i32>>,
+    pub data: PgJson<BTreeMap<String, i32>>,
 }
 
 async fn setup_database(host: &str, port: u16) -> Result<()> {

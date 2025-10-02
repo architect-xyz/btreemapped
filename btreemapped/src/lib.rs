@@ -68,9 +68,9 @@ pub trait PgSchema {
 
 /// Wrapper type for JSON fields that implements ToSql by serializing to serde_json::Value
 #[derive(Debug, Clone)]
-pub struct Json<T>(pub T);
+pub struct PgJson<T>(pub T);
 
-impl<T> std::ops::Deref for Json<T> {
+impl<T> std::ops::Deref for PgJson<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -78,13 +78,13 @@ impl<T> std::ops::Deref for Json<T> {
     }
 }
 
-impl<T> std::ops::DerefMut for Json<T> {
+impl<T> std::ops::DerefMut for PgJson<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<T> serde::Serialize for Json<T>
+impl<T> serde::Serialize for PgJson<T>
 where
     T: serde::Serialize,
 {
@@ -96,7 +96,19 @@ where
     }
 }
 
-impl<T> postgres_types::ToSql for Json<T>
+impl<'de, T> serde::Deserialize<'de> for PgJson<T>
+where
+    T: serde::Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(PgJson)
+    }
+}
+
+impl<T> postgres_types::ToSql for PgJson<T>
 where
     T: serde::Serialize + std::fmt::Debug + Sync,
 {

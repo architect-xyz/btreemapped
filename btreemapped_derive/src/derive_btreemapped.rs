@@ -143,16 +143,15 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
         let name_str = name.to_string();
         let conversion_arm = if field_try_from_json.contains(name) {
             // use serde_json::from_value to convert from JSON
-            // Extract inner type from Json<T> wrapper if present
-            let inner_ty = extract_json_inner_type(ty).unwrap_or(ty);
             quote! {
                 #name_str => {
                     let _json_val = TryInto::<serde_json::Value>::try_into(v)
                         .map_err(|e| anyhow::anyhow!("{e:?}"))
                         .with_context(|| format!("while converting column \"{}\" to serde_json::Value", #name_str))?;
-                    let _inner = serde_json::from_value::<#inner_ty>(_json_val)
-                        .with_context(|| format!("while deserializing JSON for column \"{}\"", #name_str))?;
-                    #name = Some(btreemapped::Json(_inner));
+                    #name = Some(
+                        serde_json::from_value::<#ty>(_json_val)
+                            .with_context(|| format!("while deserializing JSON for column \"{}\"", #name_str))?
+                    );
                 }
             }
         } else {
@@ -353,23 +352,6 @@ fn is_option_type(ty: &Type) -> bool {
             segment.ident == "Option"
         }
         _ => false,
-    }
-}
-
-fn extract_json_inner_type(ty: &Type) -> Option<&Type> {
-    match ty {
-        Type::Path(type_path) => {
-            let segment = type_path.path.segments.last()?;
-            if segment.ident == "Json" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        return Some(inner_ty);
-                    }
-                }
-            }
-            None
-        }
-        _ => None,
     }
 }
 
