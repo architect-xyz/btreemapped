@@ -4,7 +4,10 @@ mod derive_btreemapped;
 mod derive_pg_schema;
 mod impl_for_range;
 
-#[proc_macro_derive(BTreeMapped, attributes(btreemap, derived, parse, pg_enum, try_from, try_from_json))]
+#[proc_macro_derive(
+    BTreeMapped,
+    attributes(btreemap, derived, parse, pg_enum, try_from, try_from_json)
+)]
 pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     derive_btreemapped::derive_btreemapped(input)
 }

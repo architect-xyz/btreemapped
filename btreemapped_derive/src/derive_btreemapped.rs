@@ -168,80 +168,80 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                 }
                 None => {
                     if field_parse.contains(name) {
-                    // use FromStr to convert from String or Option<String> as appropriate
-                    if is_option_type(ty) {
-                        quote! {
-                            #name_str => {
-                                let _i = TryInto::<Option<String>>::try_into(v)
-                                    .map_err(|e| anyhow::anyhow!("{e:?}"))
-                                    .with_context(|| format!("while converting column \"{}\" to Option<String>", #name_str))?;
-                                match _i {
-                                    Some(s) => {
-                                        #name = Some(Some(
-                                            s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
-                                        ));
+                        // use FromStr to convert from String or Option<String> as appropriate
+                        if is_option_type(ty) {
+                            quote! {
+                                #name_str => {
+                                    let _i = TryInto::<Option<String>>::try_into(v)
+                                        .map_err(|e| anyhow::anyhow!("{e:?}"))
+                                        .with_context(|| format!("while converting column \"{}\" to Option<String>", #name_str))?;
+                                    match _i {
+                                        Some(s) => {
+                                            #name = Some(Some(
+                                                s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                            ));
+                                        }
+                                        None => {
+                                            #name = Some(None);
+                                        }
                                     }
-                                    None => {
-                                        #name = Some(None);
+                                }
+                            }
+                        } else {
+                            quote! {
+                                #name_str => {
+                                    let _i = TryInto::<String>::try_into(v)
+                                        .map_err(|e| anyhow::anyhow!("{e:?}"))
+                                        .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
+                                    #name = Some(
+                                        _i.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                    );
+                                }
+                            }
+                        }
+                    } else if field_enum.contains(name) {
+                        if is_option_type(ty) {
+                            quote! {
+                                #name_str => {
+                                    let _s = TryInto::<Option<String>>::try_into(v)
+                                        .map_err(|e| anyhow::anyhow!("{e:?}"))
+                                        .with_context(|| format!("while converting column \"{}\" to Option<String>", #name_str))?;
+                                    match _s {
+                                        Some(s) => {
+                                            #name = Some(Some(
+                                                s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                            ));
+                                        }
+                                        None => {
+                                            #name = Some(None);
+                                        }
                                     }
+                                }
+                            }
+                        } else {
+                            quote! {
+                                #name_str => {
+                                    let _s = TryInto::<String>::try_into(v)
+                                        .map_err(|e| anyhow::anyhow!("{e:?}"))
+                                        .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
+                                    #name = Some(
+                                        _s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                    );
                                 }
                             }
                         }
                     } else {
+                        // normal TryInto conversion
                         quote! {
                             #name_str => {
-                                let _i = TryInto::<String>::try_into(v)
-                                    .map_err(|e| anyhow::anyhow!("{e:?}"))
-                                    .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
                                 #name = Some(
-                                    _i.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
+                                    v.try_into()
+                                     .map_err(|e| anyhow::anyhow!("{e:?}"))
+                                     .with_context(|| format!("while converting column \"{}\"", #name_str))?
                                 );
                             }
                         }
                     }
-                } else if field_enum.contains(name) {
-                    if is_option_type(ty) {
-                        quote! {
-                            #name_str => {
-                                let _s = TryInto::<Option<String>>::try_into(v)
-                                    .map_err(|e| anyhow::anyhow!("{e:?}"))
-                                    .with_context(|| format!("while converting column \"{}\" to Option<String>", #name_str))?;
-                                match _s {
-                                    Some(s) => {
-                                        #name = Some(Some(
-                                            s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
-                                        ));
-                                    }
-                                    None => {
-                                        #name = Some(None);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        quote! {
-                            #name_str => {
-                                let _s = TryInto::<String>::try_into(v)
-                                    .map_err(|e| anyhow::anyhow!("{e:?}"))
-                                    .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
-                                #name = Some(
-                                    _s.parse().with_context(|| format!("while parsing column \"{}\"", #name_str))?
-                                );
-                            }
-                        }
-                    }
-                } else {
-                    // normal TryInto conversion
-                    quote! {
-                        #name_str => {
-                            #name = Some(
-                                v.try_into()
-                                 .map_err(|e| anyhow::anyhow!("{e:?}"))
-                                 .with_context(|| format!("while converting column \"{}\"", #name_str))?
-                            );
-                        }
-                    }
-                }
                 }
             }
         };

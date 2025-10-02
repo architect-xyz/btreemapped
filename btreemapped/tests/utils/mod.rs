@@ -25,7 +25,10 @@ pub async fn setup_postgres_container(
     Ok((container, host_port))
 }
 
-pub async fn create_postgres_client(host: &str, port: u16) -> Result<tokio_postgres::Client> {
+pub async fn create_postgres_client(
+    host: &str,
+    port: u16,
+) -> Result<tokio_postgres::Client> {
     let conn_str = format!(
         "host={} port={} user=postgres password=postgres dbname=testdb",
         host, port
