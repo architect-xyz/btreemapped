@@ -51,9 +51,9 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     let mut unindexed_field_types = vec![]; // just the types in order, for convenience
     let mut all_fields = vec![]; // all fields, for convenience
     let mut field_try_from: HashMap<Ident, Type> = HashMap::new();
+    let mut field_try_from_json: HashSet<Ident> = HashSet::new();
     let mut field_parse: HashSet<Ident> = HashSet::new();
     let mut field_enum: HashSet<Ident> = HashSet::new();
-    let mut field_try_from_json: HashSet<Ident> = HashSet::new();
 
     for field in fields {
         let name = field.ident.clone().expect("Expected named fields");
