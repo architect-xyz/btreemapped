@@ -8,12 +8,9 @@ use pg_replicate::pipeline::{
 };
 use postgres_types::Type;
 use serde::Serialize;
-use testcontainers::{
-    core::{IntoContainerPort, WaitFor},
-    runners::AsyncRunner,
-    GenericImage, ImageExt,
-};
-use tokio_postgres::NoTls;
+use utils::{create_postgres_client, setup_postgres_container};
+
+mod utils;
 
 #[derive(Debug, Clone, Serialize, BTreeMapped, PgSchema)]
 #[btreemap(index = ["id"])]
@@ -26,38 +23,8 @@ pub struct TestRecord {
     pub value: Option<i32>,
 }
 
-async fn setup_postgres_container(
-) -> Result<(testcontainers::ContainerAsync<GenericImage>, u16)> {
-    let container = GenericImage::new("postgres", "16-alpine")
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        .with_exposed_port(5432.tcp())
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_DB", "testdb")
-        .with_cmd(vec!["postgres", "-c", "wal_level=logical"])
-        .start()
-        .await?;
-
-    let host_port = container.get_host_port_ipv4(5432).await?;
-
-    Ok((container, host_port))
-}
-
 async fn setup_database(host: &str, port: u16) -> Result<()> {
-    let conn_str = format!(
-        "host={} port={} user=postgres password=postgres dbname=testdb",
-        host, port
-    );
-    let (client, connection) = tokio_postgres::connect(&conn_str, NoTls).await?;
-
-    // Spawn connection handler
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
+    let client = create_postgres_client(host, port).await?;
 
     // Create table
     client
@@ -78,17 +45,7 @@ async fn setup_database(host: &str, port: u16) -> Result<()> {
 }
 
 async fn insert_test_data(host: &str, port: u16) -> Result<()> {
-    let conn_str = format!(
-        "host={} port={} user=postgres password=postgres dbname=testdb",
-        host, port
-    );
-    let (client, connection) = tokio_postgres::connect(&conn_str, NoTls).await?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
+    let client = create_postgres_client(host, port).await?;
 
     // Insert test data
     client
@@ -180,17 +137,7 @@ async fn test_basic_replication() -> Result<()> {
 
     // Test update
     {
-        let conn_str = format!(
-            "host={} port={} user=postgres password=postgres dbname=testdb",
-            host, port
-        );
-        let (client, connection) = tokio_postgres::connect(&conn_str, NoTls).await?;
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("connection error: {}", e);
-            }
-        });
+        let client = create_postgres_client(host, port).await?;
 
         client
             .execute(
@@ -208,17 +155,7 @@ async fn test_basic_replication() -> Result<()> {
 
     // Test delete
     {
-        let conn_str = format!(
-            "host={} port={} user=postgres password=postgres dbname=testdb",
-            host, port
-        );
-        let (client, connection) = tokio_postgres::connect(&conn_str, NoTls).await?;
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("connection error: {}", e);
-            }
-        });
+        let client = create_postgres_client(host, port).await?;
 
         client.execute("DELETE FROM test_records WHERE id = $1", &[&2i64]).await?;
 

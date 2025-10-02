@@ -53,6 +53,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     let mut field_try_from: HashMap<Ident, Type> = HashMap::new();
     let mut field_parse: HashSet<Ident> = HashSet::new();
     let mut field_enum: HashSet<Ident> = HashSet::new();
+    let mut field_try_from_json: HashSet<Ident> = HashSet::new();
 
     for field in fields {
         let name = field.ident.clone().expect("Expected named fields");
@@ -64,6 +65,8 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             .map(|attr| attr.parse_args::<Type>().unwrap())
         {
             field_try_from.insert(name.clone(), try_from_ty);
+        } else if field.attrs.iter().any(|attr| attr.path().is_ident("try_from_json")) {
+            field_try_from_json.insert(name.clone());
         } else if field.attrs.iter().any(|attr| attr.path().is_ident("pg_enum")) {
             field_enum.insert(name.clone());
         } else if field.attrs.iter().any(|attr| attr.path().is_ident("parse")) {
@@ -138,19 +141,33 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     let mut parse_row_unindexed_match_arms = vec![];
     for (name, ty) in &all_fields {
         let name_str = name.to_string();
-        let conversion_arm = match field_try_from.get(name) {
-            Some(try_from_ty) => {
-                // use an intermediate type to convert from SQL
-                quote! {
-                    #name_str => {
-                        let _i = TryInto::<#try_from_ty>::try_into(v)
-                            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-                        #name = Some(_i.try_into()?);
-                    }
+        let conversion_arm = if field_try_from_json.contains(name) {
+            // use serde_json::from_value to convert from JSON
+            quote! {
+                #name_str => {
+                    let _json_val = TryInto::<serde_json::Value>::try_into(v)
+                        .map_err(|e| anyhow::anyhow!("{e:?}"))
+                        .with_context(|| format!("while converting column \"{}\" to serde_json::Value", #name_str))?;
+                    #name = Some(
+                        serde_json::from_value::<#ty>(_json_val)
+                            .with_context(|| format!("while deserializing JSON for column \"{}\"", #name_str))?
+                    );
                 }
             }
-            None => {
-                if field_parse.contains(name) {
+        } else {
+            match field_try_from.get(name) {
+                Some(try_from_ty) => {
+                    // use an intermediate type to convert from SQL
+                    quote! {
+                        #name_str => {
+                            let _i = TryInto::<#try_from_ty>::try_into(v)
+                                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                            #name = Some(_i.try_into()?);
+                        }
+                    }
+                }
+                None => {
+                    if field_parse.contains(name) {
                     // use FromStr to convert from String or Option<String> as appropriate
                     if is_option_type(ty) {
                         quote! {
@@ -224,6 +241,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                             );
                         }
                     }
+                }
                 }
             }
         };
