@@ -1,24 +1,28 @@
 use anyhow::Result;
-use btreemapped::{BTreeMapSink, BTreeMapped, LIndex1};
-use btreemapped_derive::BTreeMapped;
+use btreemapped::{BTreeMapSink, BTreeMapped, Json, LIndex1, PgSchema};
+use btreemapped_derive::{BTreeMapped, PgSchema};
 use pg_replicate::pipeline::{
     batching::{data_pipeline::BatchDataPipeline, BatchConfig},
     sources::postgres::{PostgresSource, TableNamesFrom},
     PipelineAction,
 };
+use postgres_types::Type;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use utils::{create_postgres_client, setup_postgres_container};
 
 mod utils;
 
-#[derive(Debug, Clone, Serialize, BTreeMapped)]
+#[derive(Debug, Clone, Serialize, BTreeMapped, PgSchema)]
 #[btreemap(index = ["id"])]
 pub struct JsonRecord {
+    #[pg_type(Type::INT8)]
     pub id: i64,
+    #[pg_type(Type::TEXT)]
     pub name: Option<String>,
+    #[pg_type(Type::JSON)]
     #[try_from_json]
-    pub data: BTreeMap<String, i32>,
+    pub data: Json<BTreeMap<String, i32>>,
 }
 
 async fn setup_database(host: &str, port: u16) -> Result<()> {

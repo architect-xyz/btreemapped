@@ -21,6 +21,7 @@ anyhow = { workspace = true }
 async-stream = { workspace = true }
 async-trait = { workspace = true }
 btreemapped_derive = { version = "0.1.0", path = "../btreemapped_derive" }
+bytes = { workspace = true }
 env_logger = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true, optional = true }
@@ -30,6 +31,7 @@ pg_replicate = { workspace = true }
 postgres-types = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
