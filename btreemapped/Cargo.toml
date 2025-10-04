@@ -8,7 +8,7 @@ homepage = "https://www.architect.co"
 keywords = ["postgres", "database", "replication", "btreemap"]
 license = "MIT"
 name = "btreemapped"
-version = "0.2.0"
+version = "0.3.0"
 
 [[example]]
 name = "basic"
@@ -21,7 +21,7 @@ sqlx = ["dep:sqlx"]
 anyhow = { workspace = true }
 async-stream = { workspace = true }
 async-trait = { workspace = true }
-btreemapped_derive = { version = "0.1.0", path = "../btreemapped_derive" }
+btreemapped_derive = { version = "0.2.0", path = "../btreemapped_derive" }
 bytes = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true, optional = true }
@@ -38,7 +38,10 @@ tokio = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }
-postgres-types = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1"] }
+postgres-types = { workspace = true, features = [
+    "with-chrono-0_4",
+    "with-serde_json-1",
+] }
 rust_decimal = { workspace = true }
 testcontainers = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
