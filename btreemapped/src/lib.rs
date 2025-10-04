@@ -3,6 +3,7 @@
 //!
 //! TODO: fill out prose documentation here
 
+pub mod json;
 pub mod lvalue;
 pub mod multi_sink;
 pub mod replica;
@@ -10,6 +11,7 @@ pub mod sink;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::{BTreeMapped, PgSchema};
+pub use json::PgJson;
 pub use lvalue::*;
 pub use multi_sink::MultiBTreeMapSink;
 pub use replica::{

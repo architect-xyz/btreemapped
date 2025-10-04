@@ -348,7 +348,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         replica.contains_key(&i)
     }
 
-    pub fn get<Q>(&self, i: Q) -> Option<MappedRwLockReadGuard<T>>
+    pub fn get<Q>(&self, i: Q) -> Option<MappedRwLockReadGuard<'_, T>>
     where
         Q: Into<T::LIndex>,
     {
@@ -478,6 +478,8 @@ mod tests {
         assert_eq!(io4, vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]);
     }
 
+    // NB: testing the macro in `Baz` compiles
+    #[allow(dead_code)]
     #[derive(
         Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
     )]
@@ -499,6 +501,7 @@ mod tests {
     }
 
     /// Shows that parse works for Option<T>s when T implements FromStr
+    #[allow(dead_code)] // NB: testing the macro compiles
     #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["custom"])]
     struct Baz {
