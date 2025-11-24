@@ -13,6 +13,8 @@ todo:
 - Erase arity from the type somehow?
 - Pretty sure arity >= 2 iteration needs an additional bounds check
 - Use fully qualified name for LIndex* in btreemapped_derive, so users don't have to import it explicitly
+- https://www.morling.dev/blog/mastering-postgres-replication-slots/
+- Study arithmetic checksum properties to see what's best for checking replication success. Although, pg_current_wal_lsn()isn't transactional, so it's not clear how you would get a stable reference. There might be some way to "dye" the databaseor leave a breadcrumb. 
 
 ## Running the examples
 
