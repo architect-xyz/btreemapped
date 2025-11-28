@@ -27,7 +27,9 @@ futures = { workspace = true }
 log = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 paste = { workspace = true }
-pg_replicate = { workspace = true }
+# pg_replicate = { workspace = true }  # REMOVED: migrating to etl
+etl = { workspace = true }
+etl-postgres = { workspace = true }
 postgres-types = { workspace = true, features = ["with-serde_json-1"] }
 rand = { workspace = true }
 serde = { workspace = true }

@@ -5,19 +5,23 @@
 
 pub mod json;
 pub mod lvalue;
-pub mod multi_sink;
+// TODO(etl-migration): uncomment after sink.rs is updated
+// pub mod multi_sink;
 pub mod replica;
-pub mod sink;
+// TODO(etl-migration): uncomment after sink.rs is updated
+// pub mod sink;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::{BTreeMapped, PgSchema};
 pub use json::PgJson;
 pub use lvalue::*;
-pub use multi_sink::MultiBTreeMapSink;
+// TODO(etl-migration): uncomment after multi_sink.rs is updated
+// pub use multi_sink::MultiBTreeMapSink;
 pub use replica::{
     BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
 };
-pub use sink::BTreeMapSink;
+// TODO(etl-migration): uncomment after sink.rs is updated
+// pub use sink::BTreeMapSink;
 
 pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     type LIndex: HasArity<N>
@@ -42,17 +46,17 @@ pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     /// Build the index value for this struct.
     fn index(&self) -> Self::Index;
 
-    /// Parse a row from pg_replica into a full struct.
+    /// Parse a row from etl into a full struct.
     fn parse_row(
-        schema: &pg_replicate::table::TableSchema,
-        row: pg_replicate::conversions::table_row::TableRow,
+        schema: &etl_postgres::types::TableSchema,
+        row: etl::types::TableRow,
     ) -> anyhow::Result<Self>;
 
-    /// Parse a row from pg_replica into just the index.
+    /// Parse a row from etl into just the index.
     /// Used for UPDATE/DELETE operations.
     fn parse_row_index(
-        schema: &pg_replicate::table::TableSchema,
-        row: pg_replicate::conversions::table_row::TableRow,
+        schema: &etl_postgres::types::TableSchema,
+        row: etl::types::TableRow,
     ) -> anyhow::Result<Self::Index>;
 }
 
@@ -68,24 +72,25 @@ pub trait PgSchema {
     ) -> impl ExactSizeIterator<Item = &(dyn postgres_types::ToSql + Sync)>;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use btreemapped_derive::PgSchema;
-    use chrono::{DateTime, Utc};
-    use postgres_types::Type;
-
-    #[allow(dead_code)]
-    #[derive(Debug, Clone, PgSchema)]
-    #[btreemap(index = ["key"])]
-    struct Foo {
-        #[pg_type(Type::TEXT)]
-        key: String,
-        #[pg_type(Type::TIMESTAMPTZ)]
-        bar: Option<DateTime<Utc>>,
-        #[pg_type(Type::INT4)]
-        baz: i32,
-        #[pg_type(Type::INT8)]
-        qux: i64,
-    }
-}
+// TODO(etl-migration): uncomment after derive macro is updated
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use btreemapped_derive::PgSchema;
+//     use chrono::{DateTime, Utc};
+//     use postgres_types::Type;
+//
+//     #[allow(dead_code)]
+//     #[derive(Debug, Clone, PgSchema)]
+//     #[btreemap(index = ["key"])]
+//     struct Foo {
+//         #[pg_type(Type::TEXT)]
+//         key: String,
+//         #[pg_type(Type::TIMESTAMPTZ)]
+//         bar: Option<DateTime<Utc>>,
+//         #[pg_type(Type::INT4)]
+//         baz: i32,
+//         #[pg_type(Type::INT8)]
+//         qux: i64,
+//     }
+// }

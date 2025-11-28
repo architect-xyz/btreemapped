@@ -1,3 +1,9 @@
+// TODO(etl-migration): uncomment after sink.rs is updated and derive macro generates etl-compatible code
+fn main() {
+    eprintln!("Example disabled during etl migration. See source for original code.");
+}
+
+/*
 use anyhow::Result;
 use btreemapped::{BTreeMapSink, BTreeMapped, LIndex1, PgSchema};
 use btreemapped_derive::{BTreeMapped, PgSchema};
@@ -76,3 +82,4 @@ async fn replication_task(sink: BTreeMapSink<Foobar, 1>) -> Result<()> {
     pipeline_fut.await?;
     Ok(())
 }
+*/
