@@ -8,10 +8,9 @@ pub mod lvalue;
 // TODO(etl-migration): uncomment after sink.rs is updated
 // pub mod multi_sink;
 pub mod replica;
-// TODO(etl-migration): uncomment after sink.rs is updated
-// pub mod sink;
+pub mod sink;
 // TODO: maybe pub(crate)
-pub mod etl_store;
+pub mod sink_state;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::{BTreeMapped, PgSchema};

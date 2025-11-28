@@ -8,7 +8,7 @@ use etl_postgres::types::{TableId, TableSchema};
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
-/// Inner state of [`MemoryStore`]
+/// Inner state of [`SinkState`]
 #[derive(Debug)]
 struct Inner {
     /// Current replication state for each table - this is the authoritative source of truth
@@ -29,18 +29,18 @@ struct Inner {
 
 /// In-memory storage for ETL pipeline state and schema information.
 ///
-/// [`MemoryStore`] implements both [`StateStore`] and [`SchemaStore`] traits,
+/// [`SinkState`] implements both [`StateStore`] and [`SchemaStore`] traits,
 /// providing a complete storage solution that keeps all data in memory. This is
 /// ideal for testing, development, and scenarios where persistence is not required.
 ///
 /// All state information including table replication phases, schema definitions,
 /// and table mappings are stored in memory and will be lost on process restart.
 #[derive(Debug, Clone)]
-pub struct MemoryStore {
+pub struct SinkState {
     inner: Arc<Mutex<Inner>>,
 }
 
-impl MemoryStore {
+impl SinkState {
     /// Creates a new empty memory store.
     ///
     /// The store initializes with empty collections for all state and schema data.
@@ -58,13 +58,13 @@ impl MemoryStore {
     }
 }
 
-impl Default for MemoryStore {
+impl Default for SinkState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl StateStore for MemoryStore {
+impl StateStore for SinkState {
     async fn get_table_replication_state(
         &self,
         table_id: TableId,
@@ -156,6 +156,8 @@ impl StateStore for MemoryStore {
         Ok(inner.table_mappings.len())
     }
 
+    // TODO: what is the exact format of destination_table_id
+    // with respect to schemas, including the public schema?
     async fn store_table_mapping(
         &self,
         source_table_id: TableId,
@@ -168,7 +170,7 @@ impl StateStore for MemoryStore {
     }
 }
 
-impl SchemaStore for MemoryStore {
+impl SchemaStore for SinkState {
     async fn get_table_schema(
         &self,
         table_id: &TableId,
@@ -198,7 +200,7 @@ impl SchemaStore for MemoryStore {
     }
 }
 
-impl CleanupStore for MemoryStore {
+impl CleanupStore for SinkState {
     async fn cleanup_table_state(&self, table_id: TableId) -> EtlResult<()> {
         let mut inner = self.inner.lock();
 
