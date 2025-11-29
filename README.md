@@ -22,10 +22,7 @@ todo:
 
 ```bash
 # start a postgres
-docker compose up
-
-# setup the example table and publication
-psql -d "host=localhost port=54320 user=postgres password=postgres" -f ./example.sql
+docker compose up postgres
 
 # run the replication example
 cargo run --example basic
