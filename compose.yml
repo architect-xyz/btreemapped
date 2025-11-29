@@ -7,5 +7,8 @@ services:
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+    volumes:
+      # Run initialization SQL on first container startup
+      - ./1.sql:/docker-entrypoint-initdb.d/1.sql:ro
     ports:
       - "54320:5432"

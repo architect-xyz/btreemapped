@@ -291,8 +291,8 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             }
 
             fn parse_row(
-                schema: &pg_replicate::table::TableSchema,
-                row: pg_replicate::conversions::table_row::TableRow,
+                schema: &etl_postgres::types::TableSchema,
+                row: etl::types::TableRow,
             ) -> anyhow::Result<Self> {
                 use anyhow::Context;
                 #(#parse_row_index_var_decls;)*
@@ -316,8 +316,8 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             }
 
             fn parse_row_index(
-                schema: &pg_replicate::table::TableSchema,
-                row: pg_replicate::conversions::table_row::TableRow,
+                schema: &etl_postgres::types::TableSchema,
+                row: etl::types::TableRow,
             ) -> anyhow::Result<Self::Index> {
                 use anyhow::Context;
                 #(#parse_row_index_var_decls;)*
