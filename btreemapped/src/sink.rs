@@ -7,13 +7,7 @@ use std::sync::Arc;
 
 pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
     pub replica: BTreeMapReplica<T, N>,
-    // committed_lsn: AtomicU64,
-    // // NB: LSN 0/0 shouldn't be encountered in practice, and
-    // // is used synonymously with `None` in our logic.
-    // txn_lsn: AtomicU64,
     txn_clog: Vec<Result<T, T::Index>>,
-    // pub(crate) table_name: Arc<str>,
-    // pub(crate) table_metadata: Arc<OnceLock<TableMetadata>>,
     table_schema: Arc<TableSchema>,
 }
 
@@ -156,29 +150,8 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
 
     fn write_event(&mut self, event: Event) -> EtlResult<()> {
         match event {
-            Event::Begin(..) => {
-                // self.txn_lsn.store(begin.commit_lsn.into(), Ordering::SeqCst);
-            }
-            Event::Commit(..) => {
-                // let txn_lsn = self.txn_lsn.load(Ordering::SeqCst);
-                // let commit_lsn: u64 = commit.commit_lsn.into();
-                // if txn_lsn == 0 {
-                //     Err::<_, EtlError>(
-                //         (ErrorKind::InvalidState, "commit event without preceding begin")
-                //             .into(),
-                //     )?;
-                // } else if txn_lsn != commit_lsn {
-                //     Err::<_, EtlError>(
-                //         (ErrorKind::InvalidState, "commit event with incorrect LSN")
-                //             .into(),
-                //     )?;
-                // } else {
-                //     // INVARIANT: txn_lsn == commit_lsn
-                //     self.commit(commit_lsn);
-                //     // let consumers catch up
-                //     tokio::task::yield_now().await;
-                // }
-            }
+            Event::Begin(..) => {}
+            Event::Commit(..) => {}
             Event::Insert(insert) => {
                 if let Some(t) = parse_row::<T, N>(&self.table_schema, insert.table_row) {
                     self.txn_clog.push(Ok(t));
@@ -219,160 +192,3 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
         EtlResult::Ok(())
     }
 }
-
-// impl<T: BTreeMapped<N>, const N: usize> Destination for BTreeMapSink<T, N> {
-//     fn name() -> &'static str {
-//         "btreemap"
-//     }
-
-//     async fn truncate_table(&self, table_id: TableId) -> EtlResult<()> {
-//         #[cfg(feature = "log")]
-//         log::trace!("truncate_table: {table_id}");
-//         if let Some(meta) = self.table_metadata.get() {
-//             if meta.table_id == table_id {
-//                 self.truncate();
-//             }
-//         }
-//         EtlResult::Ok(())
-//     }
-
-//     async fn write_table_rows(
-//         &self,
-//         table_id: TableId,
-//         rows: Vec<TableRow>,
-//     ) -> EtlResult<()> {
-//         #[cfg(feature = "log")]
-//         log::trace!("write_table_rows to table {table_id}: {} rows", rows.len());
-//         if let Some(meta) = self.table_metadata.get() {
-//             if meta.table_id == table_id {
-//                 let mut updates = vec![];
-//                 let (seqid, seqno) = {
-//                     let mut replica = self.replica.write();
-//                     for row in rows {
-//                         if let Some(t) = parse_row::<T, N>(&meta.table_schema, row) {
-//                             let index = t.index();
-//                             replica.insert(index.clone().into(), t.clone());
-//                             updates.push((index, Some(t)));
-//                         }
-//                     }
-//                     replica.seqno += 1;
-//                     (replica.seqid, replica.seqno)
-//                 };
-//                 let _ = self.replica.sequence.send_replace((seqid, seqno));
-//                 if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
-//                     seqid,
-//                     seqno,
-//                     snapshot: None,
-//                     updates,
-//                 })) {
-//                     // nobody listening, fine
-//                 }
-//                 // let consumers catch up
-//                 // CR alee: possibly we could make this more efficient by tuning when we
-//                 // yield to the size of our bcast channel? not sure if that's true...
-//                 tokio::task::yield_now().await;
-//             }
-//         }
-//         EtlResult::Ok(())
-//     }
-
-//     async fn write_events(&self, events: Vec<Event>) -> EtlResult<()> {
-//         for event in events {
-//             #[cfg(feature = "log")]
-//             log::trace!("write_events: {:?}", event);
-//             match event {
-//                 Event::Begin(begin) => {
-//                     self.txn_lsn.store(begin.commit_lsn.into(), Ordering::SeqCst);
-//                 }
-//                 Event::Commit(commit) => {
-//                     let txn_lsn = self.txn_lsn.load(Ordering::SeqCst);
-//                     let commit_lsn: u64 = commit.commit_lsn.into();
-//                     if txn_lsn == 0 {
-//                         Err::<_, EtlError>(
-//                             (
-//                                 ErrorKind::InvalidState,
-//                                 "commit event without preceding begin",
-//                             )
-//                                 .into(),
-//                         )?;
-//                     } else if txn_lsn != commit_lsn {
-//                         Err::<_, EtlError>(
-//                             (ErrorKind::InvalidState, "commit event with incorrect LSN")
-//                                 .into(),
-//                         )?;
-//                     } else {
-//                         // INVARIANT: txn_lsn == commit_lsn
-//                         self.commit(commit_lsn);
-//                         // let consumers catch up
-//                         tokio::task::yield_now().await;
-//                     }
-//                 }
-//                 Event::Insert(insert) => {
-//                     if let Some(meta) = self.table_metadata.get() {
-//                         if meta.table_id == insert.table_id {
-//                             if let Some(t) =
-//                                 parse_row::<T, N>(&meta.table_schema, insert.table_row)
-//                             {
-//                                 let mut txn_clog = self.txn_clog.lock();
-//                                 txn_clog.push(Ok(t));
-//                             }
-//                         }
-//                     }
-//                 }
-//                 Event::Update(update) => {
-//                     if let Some(meta) = self.table_metadata.get() {
-//                         if meta.table_id == update.table_id {
-//                             let mut index = Ok(None);
-//                             if let Some((_, key)) = update.old_table_row {
-//                                 if let Some(i) =
-//                                     parse_row_index::<T, N>(&meta.table_schema, key)
-//                                 {
-//                                     index = Ok(Some(i));
-//                                 } else {
-//                                     index = Err(());
-//                                 }
-//                             }
-//                             if let Ok(index) = index {
-//                                 if let Some(t) = parse_row::<T, N>(
-//                                     &meta.table_schema,
-//                                     update.table_row,
-//                                 ) {
-//                                     let mut txn_clog = self.txn_clog.lock();
-//                                     if let Some(i) = index {
-//                                         txn_clog.push(Err(i));
-//                                     }
-//                                     txn_clog.push(Ok(t));
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-//                 Event::Delete(delete) => {
-//                     if let Some(meta) = self.table_metadata.get() {
-//                         if meta.table_id == delete.table_id {
-//                             // CR alee: under what conditions is old_table_row not Some(..)?
-//                             if let Some((_, key)) = delete.old_table_row {
-//                                 if let Some(i) =
-//                                     parse_row_index::<T, N>(&meta.table_schema, key)
-//                                 {
-//                                     let mut txn_clog = self.txn_clog.lock();
-//                                     txn_clog.push(Err(i));
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-//                 Event::Relation(..) => {}
-//                 Event::Truncate(truncate) => {
-//                     if let Some(meta) = self.table_metadata.get() {
-//                         if truncate.rel_ids.contains(&meta.table_id.into()) {
-//                             self.truncate();
-//                         }
-//                     }
-//                 }
-//                 Event::Unsupported => {}
-//             }
-//         }
-//         EtlResult::Ok(())
-//     }
-// }
