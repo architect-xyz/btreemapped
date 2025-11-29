@@ -5,19 +5,14 @@
 
 pub mod json;
 pub mod lvalue;
-// TODO(etl-migration): uncomment after sink.rs is updated
-// pub mod multi_sink;
 pub mod replica;
 pub mod replicator;
-// TODO: maybe pub(crate)
 pub(crate) mod sink;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::{BTreeMapped, PgSchema};
 pub use json::PgJson;
 pub use lvalue::*;
-// TODO(etl-migration): uncomment after multi_sink.rs is updated
-// pub use multi_sink::MultiBTreeMapSink;
 pub use replica::{
     BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
 };
