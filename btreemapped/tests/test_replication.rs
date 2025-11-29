@@ -89,6 +89,7 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
+        slot_prefix: "test_replication".to_string(),
     }
 }
 

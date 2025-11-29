@@ -99,5 +99,6 @@ fn pipeline_config() -> PipelineConfig {
         table_error_retry_delay_ms: 10000,
         table_error_retry_max_attempts: 5,
         max_table_sync_workers: 4,
+        slot_prefix: "examples_basic".to_string(),
     }
 }
