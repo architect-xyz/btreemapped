@@ -102,7 +102,14 @@ pub enum BTreeMapSyncError {
 }
 
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
-    pub fn new(seqid: u64) -> Self {
+    /// Create a new replica with a random sequence ID
+    pub fn new() -> Self {
+        let seqid = rand::random::<u64>();
+        Self::new_sequence(seqid)
+    }
+
+    /// Create a new replica with a specific sequence ID
+    pub fn new_sequence(seqid: u64) -> Self {
         let (updates, _) = broadcast::channel(100);
         let (changed, _) = watch::channel((seqid, 0));
         Self {
@@ -120,7 +127,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     /// Create an in-memory-only replica that can be written to directly.
     /// For testing or local dev convenience (e.g. not running a Postgres).
     pub fn new_in_memory() -> Self {
-        let mut t = Self::new(0);
+        let mut t = Self::new_sequence(0);
         t.read_only_replica = false;
         t
     }
@@ -408,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_btreemap_replica1() {
-        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new(0);
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
         replica.insert_for_test(Foo::new("abc", None));
         replica.insert_for_test(Foo::new(
             "def",
@@ -446,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_btreemap_replica2() {
-        let replica: BTreeMapReplica<Car, 2> = BTreeMapReplica::new(0);
+        let replica: BTreeMapReplica<Car, 2> = BTreeMapReplica::new();
         replica.insert_for_test(Car::new("Alice", 123, "abc"));
         replica.insert_for_test(Car::new("Charlie", 1000, "ghi"));
         replica.insert_for_test(Car::new("Charlie", 1001, "ghi"));

@@ -1,7 +1,5 @@
 use anyhow::Result;
-use btreemapped::{
-    replicator::BTreeMapReplicator, BTreeMapSink, BTreeMapped, LIndex1, PgSchema,
-};
+use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema};
 use btreemapped_derive::{BTreeMapped, PgSchema};
 use etl::{
     config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig},
@@ -27,11 +25,11 @@ pub struct Foobar {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let sink = BTreeMapSink::<Foobar, 1>::new("foobars");
-    let replica = sink.replica.clone();
+    let replicator = BTreeMapReplicator::new();
+    let replica = replicator.add_replica::<Foobar, 1>("foobars");
     // start replication task
     tokio::spawn(async move {
-        if let Err(e) = replication_task(sink).await {
+        if let Err(e) = replication_task(replicator).await {
             #[cfg(feature = "log")]
             log::error!("replication task failed with: {e:?}");
             #[cfg(not(feature = "log"))]
@@ -53,9 +51,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn replication_task(sink: BTreeMapSink<Foobar, 1>) -> Result<()> {
-    let state = BTreeMapReplicator::new();
-    state.register_sink(&sink);
+async fn replication_task(replicator: BTreeMapReplicator) -> Result<()> {
     let pg_config = PgConnectionConfig {
         host: "localhost".to_string(),
         port: 54320,
@@ -82,7 +78,7 @@ async fn replication_task(sink: BTreeMapSink<Foobar, 1>) -> Result<()> {
     //
     // reference: https://www.postgresql.org/docs/current/logicaldecoding-explanation.html#LOGICALDECODING-REPLICATION-SLOTS
     // Some("btreemapped_example_slot".to_string()),
-    let mut pipeline = Pipeline::new(pipeline_config, state, sink);
+    let mut pipeline = Pipeline::new(pipeline_config, replicator.clone(), replicator);
     pipeline.start().await?;
     pipeline.wait().await?;
     Ok(())

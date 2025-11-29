@@ -8,9 +8,9 @@ pub mod lvalue;
 // TODO(etl-migration): uncomment after sink.rs is updated
 // pub mod multi_sink;
 pub mod replica;
-pub mod sink;
-// TODO: maybe pub(crate)
 pub mod replicator;
+// TODO: maybe pub(crate)
+pub(crate) mod sink;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::{BTreeMapped, PgSchema};
@@ -21,11 +21,12 @@ pub use lvalue::*;
 pub use replica::{
     BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
 };
-pub use sink::BTreeMapSink;
+pub use replicator::BTreeMapReplicator;
 
 pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     type LIndex: HasArity<N>
         + std::fmt::Debug
+        + Clone
         + Eq
         + Ord
         + std::hash::Hash

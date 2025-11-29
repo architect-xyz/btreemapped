@@ -1,23 +1,25 @@
-use crate::{BTreeMapSink, BTreeMapped};
+use crate::{
+    sink::{ErasedBTreeMapReplica, ErasedBTreeMapSink},
+    BTreeMapReplica, BTreeMapped,
+};
 use etl::{
+    destination::Destination,
     error::{ErrorKind, EtlError, EtlResult},
     etl_error,
     state::table::TableReplicationPhase,
     store::{cleanup::CleanupStore, schema::SchemaStore, state::StateStore},
-    types::TableName,
+    types::{Event, TableName, TableRow},
 };
 use etl_postgres::types::{TableId, TableSchema};
 use parking_lot::Mutex;
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::HashMap, sync::Arc};
 
-/// Inner state of [`ReplicationState`]
-#[derive(Debug)]
+/// Inner state of [`BTreeMapReplicator`]
 struct Inner {
-    /// Registered BTreeMapSink metadata
-    sink_metadata: HashMap<Arc<str>, Arc<OnceLock<TableMetadata>>>,
+    sinks: HashMap<TableId, Box<dyn ErasedBTreeMapSink>>,
+    pending_sinks: HashMap<String, Box<dyn ErasedBTreeMapReplica>>,
+    committed_lsn: u64,
+    txn_lsn: Option<u64>,
     /// Current replication state for each table - this is the authoritative source of truth
     /// for table states. Every table being replicated must have an entry here.
     table_replication_states: HashMap<TableId, TableReplicationPhase>,
@@ -34,12 +36,6 @@ struct Inner {
     table_mappings: HashMap<TableId, String>,
 }
 
-#[derive(Debug)]
-pub(crate) struct TableMetadata {
-    pub table_id: TableId,
-    pub table_schema: Arc<TableSchema>,
-}
-
 /// In-memory storage for ETL pipeline state and schema information.
 ///
 /// [`BTreeMapReplicator`] implements both [`StateStore`] and [`SchemaStore`] traits,
@@ -48,7 +44,7 @@ pub(crate) struct TableMetadata {
 ///
 /// All state information including table replication phases, schema definitions,
 /// and table mappings are stored in memory and will be lost on process restart.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BTreeMapReplicator {
     inner: Arc<Mutex<Inner>>,
 }
@@ -61,7 +57,10 @@ impl BTreeMapReplicator {
     /// state and schema information.
     pub fn new() -> Self {
         let inner = Inner {
-            sink_metadata: HashMap::new(),
+            sinks: HashMap::new(),
+            pending_sinks: HashMap::new(),
+            committed_lsn: 0,
+            txn_lsn: None,
             table_replication_states: HashMap::new(),
             table_state_history: HashMap::new(),
             table_schemas: HashMap::new(),
@@ -71,12 +70,14 @@ impl BTreeMapReplicator {
         Self { inner: Arc::new(Mutex::new(inner)) }
     }
 
-    pub fn register_sink<T: BTreeMapped<N>, const N: usize>(
+    pub fn add_replica<T: BTreeMapped<N>, const N: usize>(
         &self,
-        sink: &BTreeMapSink<T, N>,
-    ) {
+        table_name: &str,
+    ) -> BTreeMapReplica<T, N> {
         let mut inner = self.inner.lock();
-        inner.sink_metadata.insert(sink.table_name.clone(), sink.table_metadata.clone());
+        let replica = BTreeMapReplica::new();
+        inner.pending_sinks.insert(table_name.to_string(), Box::new(replica.clone()));
+        replica
     }
 }
 
@@ -218,15 +219,24 @@ impl SchemaStore for BTreeMapReplicator {
         let table_schema = Arc::new(table_schema);
         let sink_table_name = normalized_table_name(&table_schema.name);
 
-        if let Some(meta) = inner.sink_metadata.get(sink_table_name.as_str()) {
-            if let Err(_) = meta.set(TableMetadata {
-                table_id: table_schema.id,
-                table_schema: table_schema.clone(),
-            }) {
-                Err::<_, EtlError>(
-                    (ErrorKind::DestinationError, SCHEMA_CHANGE_NOT_ALLOWED_ERROR).into(),
-                )?;
-            }
+        #[cfg(feature = "log")]
+        log::trace!("store_table_schema: {:?}", table_schema);
+
+        if inner.sinks.contains_key(&table_schema.id) {
+            #[cfg(feature = "log")]
+            log::error!("table schema already registered: {:?}", table_schema);
+            Err::<_, EtlError>(
+                (ErrorKind::DestinationError, SCHEMA_CHANGE_NOT_ALLOWED_ERROR).into(),
+            )?;
+        } else if let Some(replica) = inner.pending_sinks.remove(&sink_table_name) {
+            #[cfg(feature = "log")]
+            log::debug!(
+                "table {} sink assigned, table_id = {}",
+                sink_table_name,
+                table_id
+            );
+            let sink = replica.to_sink(table_schema.clone());
+            inner.sinks.insert(table_schema.id, sink);
         }
 
         inner.table_schemas.insert(table_schema.id, table_schema);
@@ -244,6 +254,118 @@ impl CleanupStore for BTreeMapReplicator {
         inner.table_schemas.remove(&table_id);
         inner.table_mappings.remove(&table_id);
 
+        Ok(())
+    }
+}
+
+impl Destination for BTreeMapReplicator {
+    fn name() -> &'static str {
+        "btreemapped"
+    }
+
+    async fn truncate_table(&self, table_id: TableId) -> EtlResult<()> {
+        let mut inner = self.inner.lock();
+        if let Some(sink) = inner.sinks.get_mut(&table_id) {
+            sink.truncate();
+        }
+        Ok(())
+    }
+
+    async fn write_table_rows(
+        &self,
+        table_id: TableId,
+        rows: Vec<TableRow>,
+    ) -> EtlResult<()> {
+        #[cfg(feature = "log")]
+        log::trace!("write_table_rows to table {table_id}: {} rows", rows.len());
+        let should_yield = {
+            let mut inner = self.inner.lock();
+            if let Some(sink) = inner.sinks.get_mut(&table_id) {
+                sink.write_table_rows(rows)?;
+                true
+            } else {
+                false
+            }
+        };
+        if should_yield {
+            // let consumers catch up
+            // CR alee: possibly we could make this more efficient by tuning when we
+            // yield to the size of our bcast channel? not sure if that's true...
+            tokio::task::yield_now().await;
+        }
+        Ok(())
+    }
+
+    async fn write_events(&self, events: Vec<Event>) -> EtlResult<()> {
+        for event in events {
+            #[cfg(feature = "log")]
+            log::trace!("write_events: {:?}", event);
+            let mut should_yield = false;
+            match event {
+                Event::Begin(begin) => {
+                    let mut inner = self.inner.lock();
+                    inner.txn_lsn = Some(begin.commit_lsn.into());
+                }
+                Event::Commit(commit) => {
+                    let mut inner = self.inner.lock();
+                    let commit_lsn: u64 = commit.commit_lsn.into();
+                    let txn_lsn = if let Some(lsn) = inner.txn_lsn {
+                        lsn
+                    } else {
+                        return Err(etl_error!(
+                            ErrorKind::DestinationError,
+                            "commit without preceding begin"
+                        ));
+                    };
+                    if txn_lsn != commit_lsn {
+                        return Err(etl_error!(
+                            ErrorKind::DestinationError,
+                            "commit with incorrect LSN"
+                        ));
+                    }
+                    // INVARIANT: txn_lsn == commit_lsn
+                    for sink in inner.sinks.values_mut() {
+                        sink.commit();
+                    }
+                    inner.committed_lsn = commit_lsn;
+                    should_yield = true;
+                }
+                Event::Insert(insert) => {
+                    let mut inner = self.inner.lock();
+                    if let Some(sink) = inner.sinks.get_mut(&insert.table_id) {
+                        sink.write_event(Event::Insert(insert))?;
+                    }
+                }
+                Event::Update(update) => {
+                    let mut inner = self.inner.lock();
+                    if let Some(sink) = inner.sinks.get_mut(&update.table_id) {
+                        sink.write_event(Event::Update(update))?;
+                    }
+                }
+                Event::Delete(delete) => {
+                    let mut inner = self.inner.lock();
+                    if let Some(sink) = inner.sinks.get_mut(&delete.table_id) {
+                        sink.write_event(Event::Delete(delete))?;
+                    }
+                }
+                Event::Relation(..) => {}
+                Event::Truncate(truncate) => {
+                    let mut inner = self.inner.lock();
+                    for rel_id in truncate.rel_ids {
+                        if let Some(sink) = inner.sinks.get_mut(&rel_id.into()) {
+                            sink.truncate();
+                        }
+                    }
+                }
+                Event::Unsupported => {}
+            }
+            if should_yield {
+                // let consumers catch up
+                // CR alee: possibly we could make this more efficient by tuning when we
+                // yield to the size of our bcast channel? not sure if that's true...
+                tokio::task::yield_now().await;
+            }
+        }
         Ok(())
     }
 }
