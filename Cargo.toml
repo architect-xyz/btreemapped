@@ -12,8 +12,8 @@ futures = "0.3"
 log = "0.4"
 parking_lot = "0.12"
 paste = "1"
-etl = { path = "../etl/etl", default-features = false }
-etl-postgres = { path = "../etl/etl-postgres", default-features = false, features = [
+etl = { git = "https://github.com/architect-xyz/etl.git", rev = "978af896f9d99c5ba525614e17aca9046f1d506f", default-features = false }
+etl-postgres = { git = "https://github.com/architect-xyz/etl.git", rev = "978af896f9d99c5ba525614e17aca9046f1d506f", default-features = false, features = [
     "replication",
 ] }
 postgres-types = { git = "https://github.com/MaterializeInc/rust-postgres", rev = "c4b473b478b3adfbf8667d2fbe895d8423f1290b" }
