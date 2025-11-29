@@ -5,6 +5,8 @@
 
 pub mod json;
 pub mod lvalue;
+#[cfg(feature = "rust_decimal")]
+pub mod numeric;
 pub mod replica;
 pub mod replicator;
 pub(crate) mod sink;
