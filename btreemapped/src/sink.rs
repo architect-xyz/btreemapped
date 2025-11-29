@@ -1,6 +1,4 @@
-use crate::{
-    replication_state::TableMetadata, BTreeMapReplica, BTreeMapped, BTreeUpdate,
-};
+use crate::{replicator::TableMetadata, BTreeMapReplica, BTreeMapped, BTreeUpdate};
 use etl::{
     destination::Destination,
     error::{ErrorKind, EtlError, EtlResult},
@@ -204,8 +202,6 @@ impl<T: BTreeMapped<N>, const N: usize> Destination for BTreeMapSink<T, N> {
 
     async fn write_events(&self, events: Vec<Event>) -> EtlResult<()> {
         for event in events {
-            // CR alee: this log line will be duplicated for every sink
-            // in the same pipeline; there should be a way to only log once.
             #[cfg(feature = "log")]
             log::trace!("write_events: {:?}", event);
             match event {

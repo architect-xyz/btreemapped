@@ -1,6 +1,6 @@
 use anyhow::Result;
 use btreemapped::{
-    replication_state::ReplicationState, BTreeMapSink, BTreeMapped, LIndex1, PgSchema,
+    replicator::BTreeMapReplicator, BTreeMapSink, BTreeMapped, LIndex1, PgSchema,
 };
 use btreemapped_derive::{BTreeMapped, PgSchema};
 use etl::{
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
 }
 
 async fn replication_task(sink: BTreeMapSink<Foobar, 1>) -> Result<()> {
-    let state = ReplicationState::new();
+    let state = BTreeMapReplicator::new();
     state.register_sink(&sink);
     let pg_config = PgConnectionConfig {
         host: "localhost".to_string(),

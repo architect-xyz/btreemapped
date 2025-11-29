@@ -42,18 +42,18 @@ pub(crate) struct TableMetadata {
 
 /// In-memory storage for ETL pipeline state and schema information.
 ///
-/// [`ReplicationState`] implements both [`StateStore`] and [`SchemaStore`] traits,
+/// [`BTreeMapReplicator`] implements both [`StateStore`] and [`SchemaStore`] traits,
 /// providing a complete storage solution that keeps all data in memory. This is
 /// ideal for testing, development, and scenarios where persistence is not required.
 ///
 /// All state information including table replication phases, schema definitions,
 /// and table mappings are stored in memory and will be lost on process restart.
 #[derive(Debug, Clone)]
-pub struct ReplicationState {
+pub struct BTreeMapReplicator {
     inner: Arc<Mutex<Inner>>,
 }
 
-impl ReplicationState {
+impl BTreeMapReplicator {
     /// Creates a new empty memory store.
     ///
     /// The store initializes with empty collections for all state and schema data.
@@ -80,13 +80,13 @@ impl ReplicationState {
     }
 }
 
-impl Default for ReplicationState {
+impl Default for BTreeMapReplicator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl StateStore for ReplicationState {
+impl StateStore for BTreeMapReplicator {
     async fn get_table_replication_state(
         &self,
         table_id: TableId,
@@ -190,7 +190,7 @@ impl StateStore for ReplicationState {
     }
 }
 
-impl SchemaStore for ReplicationState {
+impl SchemaStore for BTreeMapReplicator {
     async fn get_table_schema(
         &self,
         table_id: &TableId,
@@ -235,7 +235,7 @@ impl SchemaStore for ReplicationState {
     }
 }
 
-impl CleanupStore for ReplicationState {
+impl CleanupStore for BTreeMapReplicator {
     async fn cleanup_table_state(&self, table_id: TableId) -> EtlResult<()> {
         let mut inner = self.inner.lock();
 
