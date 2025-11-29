@@ -1,13 +1,7 @@
-// TODO(etl-migration): uncomment after sink.rs is updated and derive macro generates etl-compatible code
-/*
 use anyhow::Result;
-use btreemapped::{BTreeMapSink, BTreeMapped, LIndex1, PgJson, PgSchema};
+use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgJson, PgSchema};
 use btreemapped_derive::{BTreeMapped, PgSchema};
-use pg_replicate::pipeline::{
-    batching::{data_pipeline::BatchDataPipeline, BatchConfig},
-    sources::postgres::{PostgresSource, TableNamesFrom},
-    PipelineAction,
-};
+use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -69,28 +63,28 @@ async fn insert_test_data(host: &str, port: u16) -> Result<()> {
     Ok(())
 }
 
-async fn replication_task(
-    sink: BTreeMapSink<JsonRecord, 1>,
-    host: String,
-    port: u16,
-) -> Result<()> {
-    let pg_source = PostgresSource::new(
-        &host,
+fn pg_config(host: &str, port: u16) -> PgConnectionConfig {
+    PgConnectionConfig {
+        host: host.to_string(),
         port,
-        "testdb",
-        "postgres",
-        Some("postgres".to_string()),
-        Some("btreemapped_json_test_slot".to_string()),
-        TableNamesFrom::Publication("json_pub".to_string()),
-    )
-    .await?;
+        name: "testdb".to_string(),
+        username: "postgres".to_string(),
+        password: Some("postgres".to_string().into()),
+        tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+        keepalive: None,
+    }
+}
 
-    let batch_config = BatchConfig::new(100, std::time::Duration::from_millis(100));
-    let mut pipeline =
-        BatchDataPipeline::new(pg_source, sink, PipelineAction::Both, batch_config);
-    let pipeline_fut = pipeline.start();
-    pipeline_fut.await?;
-    Ok(())
+fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
+    PipelineConfig {
+        id: 1,
+        publication_name: "json_pub".to_string(),
+        pg_connection: pg_config(host, port),
+        batch: BatchConfig { max_size: 100, max_fill_ms: 100 },
+        table_error_retry_delay_ms: 1000,
+        table_error_retry_max_attempts: 3,
+        max_table_sync_workers: 4,
+    }
 }
 
 #[tokio::test]
@@ -105,15 +99,15 @@ async fn test_json_replication() -> Result<()> {
     // Insert initial data
     insert_test_data(host, port).await?;
 
-    // Create sink and replica
-    let sink = BTreeMapSink::<JsonRecord, 1>::new("json_records");
-    let replica = sink.replica.clone();
+    // Create replicator and replica
+    let replicator = BTreeMapReplicator::new();
+    let replica = replicator.add_replica::<JsonRecord, 1>("json_records");
 
     // Start replication task
     let replication_handle = tokio::spawn({
-        let host = host.to_string();
+        let config = pipeline_config(host, port);
         async move {
-            if let Err(e) = replication_task(sink, host, port).await {
+            if let Err(e) = replicator.run(config).await {
                 eprintln!("replication task failed: {:?}", e);
             }
         }
@@ -182,4 +176,3 @@ async fn test_json_replication() -> Result<()> {
 
     Ok(())
 }
-*/
