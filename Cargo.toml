@@ -25,4 +25,5 @@ sqlx = { version = "0.8", features = ["postgres", "runtime-tokio"] }
 testcontainers = "0.25"
 thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
+tokio-util = "0.7"
 tokio-postgres = { git = "https://github.com/MaterializeInc/rust-postgres", default-features = false, rev = "c4b473b478b3adfbf8667d2fbe895d8423f1290b" }

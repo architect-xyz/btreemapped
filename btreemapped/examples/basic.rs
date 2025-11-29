@@ -4,6 +4,7 @@ use btreemapped_derive::{BTreeMapped, PgSchema};
 use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
 use serde::Serialize;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Serialize, BTreeMapped, PgSchema)]
 #[btreemap(index = ["id"])]
@@ -22,12 +23,27 @@ pub struct Foobar {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(feature = "env_logger")]
+    env_logger::init();
+
     let replicator = BTreeMapReplicator::new();
     let replica = replicator.add_replica::<Foobar, 1>("foobars");
+    let cancel_token = CancellationToken::new();
+
+    // cancel the replication task after N seconds if CANCEL_AFTER_SECONDS is set
+    if let Ok(cancel_after_seconds) = std::env::var("CANCEL_AFTER_SECONDS") {
+        let secs = cancel_after_seconds.parse::<u64>().unwrap();
+        let cancel_token = cancel_token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            eprintln!("cancelling replication task...");
+            cancel_token.cancel();
+        });
+    }
 
     // start the replication task
-    tokio::spawn(async move {
-        if let Err(e) = replicator.run(pipeline_config()).await {
+    let replication_task = tokio::spawn(async move {
+        if let Err(e) = replicator.run(pipeline_config(), Some(cancel_token)).await {
             #[cfg(feature = "log")]
             log::error!("replication task failed with: {e:?}");
             #[cfg(not(feature = "log"))]
@@ -38,6 +54,10 @@ async fn main() -> Result<()> {
     // periodically print the state of the replica
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
     loop {
+        if replication_task.is_finished() {
+            eprintln!("replication task finished");
+            break;
+        }
         interval.tick().await;
         let state = replica.read();
         eprintln!("{state:?}");
@@ -46,7 +66,7 @@ async fn main() -> Result<()> {
             eprintln!("row with id 1337: {row_with_id_1337:?}");
         }
     }
-    #[allow(unreachable_code)]
+
     Ok(())
 }
 

@@ -13,8 +13,10 @@ use etl::{
     types::{Event, TableName, TableRow},
 };
 use etl_postgres::types::{TableId, TableSchema};
+use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
+use tokio_util::sync::CancellationToken;
 
 /// Inner state of [`BTreeMapReplicator`]
 struct Inner {
@@ -82,10 +84,36 @@ impl BTreeMapReplicator {
         replica
     }
 
-    pub async fn run(self, pipeline_config: PipelineConfig) -> EtlResult<()> {
+    pub async fn run(
+        self,
+        pipeline_config: PipelineConfig,
+        cancellation_token: Option<CancellationToken>,
+    ) -> anyhow::Result<()> {
         let mut pipeline = Pipeline::new(pipeline_config, self.clone(), self);
+        let shutdown_tx = pipeline.shutdown_tx();
         pipeline.start().await?;
-        pipeline.wait().await?;
+        let pipeline_fut = pipeline.wait().fuse();
+        pin_mut!(pipeline_fut);
+
+        let cancellation_token =
+            cancellation_token.unwrap_or_else(|| CancellationToken::new());
+        let cancellation = cancellation_token.cancelled().fuse();
+        pin_mut!(cancellation);
+
+        select_biased! {
+            _ = cancellation => {
+                if let Err(_) = shutdown_tx.shutdown() {
+                    return Err(anyhow::anyhow!("failed to shutdown pipeline"));
+                }
+            }
+            res = &mut pipeline_fut => {
+                res?;
+                return Ok(());
+            }
+        }
+
+        pipeline_fut.await?;
+
         Ok(())
     }
 }

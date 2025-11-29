@@ -105,7 +105,7 @@ async fn test_basic_replication() -> Result<()> {
     let replication_handle = tokio::spawn({
         let config = pipeline_config(host, port);
         async move {
-            if let Err(e) = replicator.run(config).await {
+            if let Err(e) = replicator.run(config, None).await {
                 eprintln!("replication task failed: {:?}", e);
             }
         }

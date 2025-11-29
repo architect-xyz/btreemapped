@@ -7,7 +7,8 @@ The way BTreeMapSink works is similar in some respects to etl::destinations::Mem
 ## Continuation notes
 
 - Allow custom slot prefix in etl::Pipeline
-- Write tests exercising 
+- Write tests exercising
+- Write tests exercising rust_decimal::Decimal 
 - Write tests exercising big batch length
 - Write tests exercising truncate
 

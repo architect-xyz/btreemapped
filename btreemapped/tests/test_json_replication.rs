@@ -1,5 +1,7 @@
 use anyhow::Result;
-use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgJson, PgSchema};
+use btreemapped::{
+    replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgJson, PgSchema,
+};
 use btreemapped_derive::{BTreeMapped, PgSchema};
 use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
@@ -107,7 +109,7 @@ async fn test_json_replication() -> Result<()> {
     let replication_handle = tokio::spawn({
         let config = pipeline_config(host, port);
         async move {
-            if let Err(e) = replicator.run(config).await {
+            if let Err(e) = replicator.run(config, None).await {
                 eprintln!("replication task failed: {:?}", e);
             }
         }
