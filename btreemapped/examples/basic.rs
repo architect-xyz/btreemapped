@@ -9,7 +9,6 @@ use etl::{
 };
 use postgres_types::Type;
 use serde::Serialize;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, BTreeMapped, PgSchema)]
 #[btreemap(index = ["id"])]
