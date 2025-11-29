@@ -1,19 +1,15 @@
-// TODO(etl-migration): uncomment after sink.rs is updated and derive macro generates etl-compatible code
-fn main() {
-    eprintln!("Example disabled during etl migration. See source for original code.");
-}
-
-/*
 use anyhow::Result;
-use btreemapped::{BTreeMapSink, BTreeMapped, LIndex1, PgSchema};
+use btreemapped::{
+    replication_state::ReplicationState, BTreeMapSink, BTreeMapped, LIndex1, PgSchema,
+};
 use btreemapped_derive::{BTreeMapped, PgSchema};
-use pg_replicate::pipeline::{
-    batching::{data_pipeline::BatchDataPipeline, BatchConfig},
-    sources::postgres::{PostgresSource, TableNamesFrom},
-    PipelineAction,
+use etl::{
+    config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig},
+    pipeline::Pipeline,
 };
 use postgres_types::Type;
 use serde::Serialize;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, BTreeMapped, PgSchema)]
 #[btreemap(index = ["id"])]
@@ -59,27 +55,36 @@ async fn main() -> Result<()> {
 }
 
 async fn replication_task(sink: BTreeMapSink<Foobar, 1>) -> Result<()> {
-    let pg_source = PostgresSource::new(
-        "localhost",                  // host
-        54320,                        // port
-        "postgres",                   // database
-        "postgres",                   // username
-        Some("postgres".to_string()), // password
-        // postgres replication slot name; this should be unique
-        // for each application instance that intends to replicate
-        //
-        // reference: https://www.postgresql.org/docs/current/logicaldecoding-explanation.html#LOGICALDECODING-REPLICATION-SLOTS
-        Some("btreemapped_example_slot".to_string()),
+    let state = ReplicationState::new();
+    state.register_sink(&sink);
+    let pg_config = PgConnectionConfig {
+        host: "localhost".to_string(),
+        port: 54320,
+        name: "postgres".to_string(), // database name
+        username: "postgres".to_string(),
+        password: Some("postgres".to_string().into()),
+        tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+        keepalive: None,
+    };
+    let pipeline_config = PipelineConfig {
+        id: 1,
         // publication name (from CREATE PUBLICATION);
         // this determines which tables are replicated to you
-        TableNamesFrom::Publication("foobars_pub".to_string()),
-    )
-    .await?;
-    let batch_config = BatchConfig::new(100, std::time::Duration::from_secs(1));
-    let mut pipeline =
-        BatchDataPipeline::new(pg_source, sink, PipelineAction::Both, batch_config);
-    let pipeline_fut = pipeline.start();
-    pipeline_fut.await?;
+        publication_name: "foobars_pub".to_string(),
+        pg_connection: pg_config,
+        batch: BatchConfig { max_size: 100, max_fill_ms: 1000 },
+        table_error_retry_delay_ms: 10000,
+        table_error_retry_max_attempts: 5,
+        max_table_sync_workers: 4,
+    };
+    // TODO: what is the slot name now?
+    // postgres replication slot name; this should be unique
+    // for each application instance that intends to replicate
+    //
+    // reference: https://www.postgresql.org/docs/current/logicaldecoding-explanation.html#LOGICALDECODING-REPLICATION-SLOTS
+    // Some("btreemapped_example_slot".to_string()),
+    let mut pipeline = Pipeline::new(pipeline_config, state, sink);
+    pipeline.start().await?;
+    pipeline.wait().await?;
     Ok(())
 }
-*/

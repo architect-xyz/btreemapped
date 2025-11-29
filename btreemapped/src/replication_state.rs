@@ -1,3 +1,4 @@
+use crate::{BTreeMapSink, BTreeMapped};
 use etl::{
     error::{ErrorKind, EtlError, EtlResult},
     etl_error,
@@ -16,7 +17,7 @@ use std::{
 #[derive(Debug)]
 struct Inner {
     /// Registered BTreeMapSink metadata
-    sink_metadata: HashMap<String, Arc<OnceLock<TableMetadata>>>,
+    sink_metadata: HashMap<Arc<str>, Arc<OnceLock<TableMetadata>>>,
     /// Current replication state for each table - this is the authoritative source of truth
     /// for table states. Every table being replicated must have an entry here.
     table_replication_states: HashMap<TableId, TableReplicationPhase>,
@@ -70,13 +71,12 @@ impl ReplicationState {
         Self { inner: Arc::new(Mutex::new(inner)) }
     }
 
-    pub fn register_sink(
+    pub fn register_sink<T: BTreeMapped<N>, const N: usize>(
         &self,
-        table_name: String,
-        metadata: Arc<OnceLock<TableMetadata>>,
+        sink: &BTreeMapSink<T, N>,
     ) {
         let mut inner = self.inner.lock();
-        inner.sink_metadata.insert(table_name, metadata);
+        inner.sink_metadata.insert(sink.table_name.clone(), sink.table_metadata.clone());
     }
 }
 
@@ -218,7 +218,7 @@ impl SchemaStore for ReplicationState {
         let table_schema = Arc::new(table_schema);
         let sink_table_name = normalized_table_name(&table_schema.name);
 
-        if let Some(meta) = inner.sink_metadata.get(&sink_table_name) {
+        if let Some(meta) = inner.sink_metadata.get(sink_table_name.as_str()) {
             if let Err(_) = meta.set(TableMetadata {
                 table_id: table_schema.id,
                 table_schema: table_schema.clone(),

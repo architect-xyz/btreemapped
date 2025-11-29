@@ -21,8 +21,7 @@ pub use lvalue::*;
 pub use replica::{
     BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
 };
-// TODO(etl-migration): uncomment after sink.rs is updated
-// pub use sink::BTreeMapSink;
+pub use sink::BTreeMapSink;
 
 pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     type LIndex: HasArity<N>
@@ -73,25 +72,24 @@ pub trait PgSchema {
     ) -> impl ExactSizeIterator<Item = &(dyn postgres_types::ToSql + Sync)>;
 }
 
-// TODO(etl-migration): uncomment after derive macro is updated
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use btreemapped_derive::PgSchema;
-//     use chrono::{DateTime, Utc};
-//     use postgres_types::Type;
-//
-//     #[allow(dead_code)]
-//     #[derive(Debug, Clone, PgSchema)]
-//     #[btreemap(index = ["key"])]
-//     struct Foo {
-//         #[pg_type(Type::TEXT)]
-//         key: String,
-//         #[pg_type(Type::TIMESTAMPTZ)]
-//         bar: Option<DateTime<Utc>>,
-//         #[pg_type(Type::INT4)]
-//         baz: i32,
-//         #[pg_type(Type::INT8)]
-//         qux: i64,
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use btreemapped_derive::PgSchema;
+    use chrono::{DateTime, Utc};
+    use postgres_types::Type;
+
+    #[allow(dead_code)]
+    #[derive(Debug, Clone, PgSchema)]
+    #[btreemap(index = ["key"])]
+    struct Foo {
+        #[pg_type(Type::TEXT)]
+        key: String,
+        #[pg_type(Type::TIMESTAMPTZ)]
+        bar: Option<DateTime<Utc>>,
+        #[pg_type(Type::INT4)]
+        baz: i32,
+        #[pg_type(Type::INT8)]
+        qux: i64,
+    }
+}

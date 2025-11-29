@@ -12,31 +12,43 @@ use std::sync::{
     Arc, OnceLock,
 };
 
+#[derive(Clone)]
 pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
+    inner: Arc<BTreeMapSinkInner<T, N>>,
+}
+
+impl<T: BTreeMapped<N>, const N: usize> std::ops::Deref for BTreeMapSink<T, N> {
+    type Target = BTreeMapSinkInner<T, N>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+pub struct BTreeMapSinkInner<T: BTreeMapped<N>, const N: usize> {
     pub replica: BTreeMapReplica<T, N>,
-    // sink_state: SinkState,
     committed_lsn: AtomicU64,
     // NB: LSN 0/0 shouldn't be encountered in practice, and
     // is used synonymously with `None` in our logic.
     txn_lsn: AtomicU64,
     txn_clog: Mutex<Vec<Result<T, T::Index>>>,
-    table_name: String,
-    table_metadata: Arc<OnceLock<TableMetadata>>,
+    pub(crate) table_name: Arc<str>,
+    pub(crate) table_metadata: Arc<OnceLock<TableMetadata>>,
 }
 
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
     pub fn new(table_name: &str) -> Self {
         let seqid = rand::random::<u64>();
         let replica = BTreeMapReplica::new(seqid);
-        // let sink_state = SinkState::new();
         Self {
-            replica,
-            // sink_state,
-            committed_lsn: AtomicU64::new(0),
-            txn_lsn: AtomicU64::new(0),
-            txn_clog: Mutex::new(vec![]),
-            table_name: table_name.to_string(),
-            table_metadata: Arc::new(OnceLock::new()),
+            inner: Arc::new(BTreeMapSinkInner {
+                replica,
+                committed_lsn: AtomicU64::new(0),
+                txn_lsn: AtomicU64::new(0),
+                txn_clog: Mutex::new(vec![]),
+                table_name: table_name.to_string().into(),
+                table_metadata: Arc::new(OnceLock::new()),
+            }),
         }
     }
 }
@@ -75,6 +87,8 @@ fn parse_row_index<T: BTreeMapped<N>, const N: usize>(
 // in Box<dyn>s.
 pub(crate) trait ErasedBTreeMapSink: Destination + Send {
     fn commit(&self, commit_lsn: u64);
+
+    fn truncate(&self);
 }
 
 impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N> {
@@ -114,6 +128,22 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
             }
         }
     }
+
+    fn truncate(&self) {
+        let mut replica = self.replica.write();
+        replica.clear();
+        replica.seqno += 1;
+        let (seqid, seqno) = (replica.seqid, replica.seqno);
+        let _ = self.replica.sequence.send_replace((seqid, seqno));
+        if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
+            seqid,
+            seqno,
+            snapshot: Some(vec![]),
+            updates: vec![],
+        })) {
+            // nobody listening, fine
+        }
+    }
 }
 
 impl<T: BTreeMapped<N>, const N: usize> Destination for BTreeMapSink<T, N> {
@@ -122,7 +152,14 @@ impl<T: BTreeMapped<N>, const N: usize> Destination for BTreeMapSink<T, N> {
     }
 
     async fn truncate_table(&self, table_id: TableId) -> EtlResult<()> {
-        todo!()
+        #[cfg(feature = "log")]
+        log::trace!("truncate_table: {table_id}");
+        if let Some(meta) = self.table_metadata.get() {
+            if meta.table_id == table_id {
+                self.truncate();
+            }
+        }
+        EtlResult::Ok(())
     }
 
     async fn write_table_rows(
@@ -167,6 +204,8 @@ impl<T: BTreeMapped<N>, const N: usize> Destination for BTreeMapSink<T, N> {
 
     async fn write_events(&self, events: Vec<Event>) -> EtlResult<()> {
         for event in events {
+            // CR alee: this log line will be duplicated for every sink
+            // in the same pipeline; there should be a way to only log once.
             #[cfg(feature = "log")]
             log::trace!("write_events: {:?}", event);
             match event {
@@ -252,8 +291,12 @@ impl<T: BTreeMapped<N>, const N: usize> Destination for BTreeMapSink<T, N> {
                     }
                 }
                 Event::Relation(..) => {}
-                Event::Truncate(_truncate) => {
-                    // TODO
+                Event::Truncate(truncate) => {
+                    if let Some(meta) = self.table_metadata.get() {
+                        if truncate.rel_ids.contains(&meta.table_id.into()) {
+                            self.truncate();
+                        }
+                    }
                 }
                 Event::Unsupported => {}
             }
