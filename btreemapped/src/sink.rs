@@ -128,7 +128,7 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
 
     fn write_table_rows(&self, rows: Vec<TableRow>) -> EtlResult<()> {
         #[cfg(feature = "log")]
-        log::trace!("write_table_rows to table {table_id}: {} rows", rows.len());
+        log::trace!("write_table_rows: {} rows", rows.len());
         let mut updates = vec![];
         let (seqid, seqno) = {
             let mut replica = self.replica.write();

@@ -242,7 +242,7 @@ impl SchemaStore for BTreeMapReplicator {
             log::debug!(
                 "table {} sink assigned, table_id = {}",
                 sink_table_name,
-                table_id
+                table_schema.id
             );
             let sink = replica.to_sink(table_schema.clone());
             inner.sinks.insert(table_schema.id, sink);

@@ -1,13 +1,17 @@
-use anyhow::Result;
-use btreemapped::PgJson;
-use rust_decimal::{prelude::FromPrimitive, Decimal};
-use std::collections::BTreeMap;
-use utils::setup_postgres_container;
-
 mod utils;
 
 #[cfg(feature = "sqlx")]
+use anyhow::Result;
+#[cfg(feature = "sqlx")]
+use btreemapped::PgJson;
+#[cfg(feature = "sqlx")]
+use rust_decimal::{prelude::FromPrimitive, Decimal};
+#[cfg(feature = "sqlx")]
 use sqlx::postgres::{PgPool, PgPoolOptions};
+#[cfg(feature = "sqlx")]
+use std::collections::BTreeMap;
+#[cfg(feature = "sqlx")]
+use utils::setup_postgres_container;
 
 #[cfg(feature = "sqlx")]
 #[derive(Debug, Clone, sqlx::FromRow, PartialEq)]
