@@ -13,9 +13,10 @@ futures = "0.3"
 log = "0.4"
 parking_lot = "0.12"
 paste = "1"
-# pg_replicate = { git = "https://github.com/architect-xyz/pg_replicate.git" }  # REMOVED: migrating to etl
 etl = { path = "../etl/etl", default-features = false }
-etl-postgres = { path = "../etl/etl-postgres", default-features = false, features = ["replication"] }
+etl-postgres = { path = "../etl/etl-postgres", default-features = false, features = [
+    "replication",
+] }
 postgres-types = "*"
 rand = "0.8"
 rust_decimal = "1"
