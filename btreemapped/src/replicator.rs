@@ -16,6 +16,7 @@ use etl_postgres::types::{TableId, TableSchema};
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{futures::OwnedNotified, Notify};
 use tokio_util::sync::CancellationToken;
 
 /// Inner state of [`BTreeMapReplicator`]
@@ -24,6 +25,7 @@ struct Inner {
     pending_sinks: HashMap<String, Box<dyn ErasedBTreeMapReplica>>,
     committed_lsn: u64,
     txn_lsn: Option<u64>,
+    fully_synced: bool,
     /// Current replication state for each table - this is the authoritative source of truth
     /// for table states. Every table being replicated must have an entry here.
     table_replication_states: HashMap<TableId, TableReplicationPhase>,
@@ -51,6 +53,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct BTreeMapReplicator {
     inner: Arc<Mutex<Inner>>,
+    synced: Arc<Notify>,
 }
 
 impl BTreeMapReplicator {
@@ -65,13 +68,14 @@ impl BTreeMapReplicator {
             pending_sinks: HashMap::new(),
             committed_lsn: 0,
             txn_lsn: None,
+            fully_synced: false,
             table_replication_states: HashMap::new(),
             table_state_history: HashMap::new(),
             table_schemas: HashMap::new(),
             table_mappings: HashMap::new(),
         };
 
-        Self { inner: Arc::new(Mutex::new(inner)) }
+        Self { inner: Arc::new(Mutex::new(inner)), synced: Arc::new(Notify::new()) }
     }
 
     pub fn add_replica<T: BTreeMapped<N>, const N: usize>(
@@ -84,6 +88,13 @@ impl BTreeMapReplicator {
         replica
     }
 
+    pub fn synced(&self) -> OwnedNotified {
+        self.synced.clone().notified_owned()
+    }
+
+    /// Run the replication pipeline.  Optionally provide a cancellation token
+    /// to stop the pipeline from another context.  Additionally, provide a
+    /// `Notify` to be notified when all tables have reached `SyncDone` state.
     pub async fn run(
         self,
         pipeline_config: PipelineConfig,
@@ -167,6 +178,17 @@ impl StateStore for BTreeMapReplicator {
         }
 
         inner.table_replication_states.insert(table_id, state);
+
+        if !inner.fully_synced {
+            if inner
+                .table_replication_states
+                .values()
+                .all(|state| matches!(state, TableReplicationPhase::SyncDone { .. }))
+            {
+                inner.fully_synced = true;
+                self.synced.notify_waiters();
+            }
+        }
 
         Ok(())
     }

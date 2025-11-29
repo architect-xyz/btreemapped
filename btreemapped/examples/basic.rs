@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
     let replicator = BTreeMapReplicator::new();
     let replica = replicator.add_replica::<Foobar, 1>("foobars");
     let cancel_token = CancellationToken::new();
+    let synced = replicator.synced();
 
     // cancel the replication task after N seconds if CANCEL_AFTER_SECONDS is set
     if let Ok(cancel_after_seconds) = std::env::var("CANCEL_AFTER_SECONDS") {
@@ -51,19 +52,24 @@ async fn main() -> Result<()> {
         }
     });
 
+    // wait for all tables to be synced
+    eprintln!("waiting for all tables to be synced...");
+    synced.await;
+    eprintln!("all tables are synced");
+
     // periodically print the state of the replica
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
     loop {
-        if replication_task.is_finished() {
-            eprintln!("replication task finished");
-            break;
-        }
-        interval.tick().await;
         let state = replica.read();
         eprintln!("{state:?}");
         // to trigger this println, insert a row into foobars with id 1337
         if let Some(row_with_id_1337) = state.get(&(1337,).into()) {
             eprintln!("row with id 1337: {row_with_id_1337:?}");
+        }
+        interval.tick().await;
+        if replication_task.is_finished() {
+            eprintln!("replication task finished");
+            break;
         }
     }
 

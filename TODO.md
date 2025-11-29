@@ -11,7 +11,3 @@ The way BTreeMapSink works is similar in some respects to etl::destinations::Mem
 - Write tests exercising rust_decimal::Decimal 
 - Write tests exercising big batch length
 - Write tests exercising truncate
-
-- Get latest LSN as a watermark to know when sync has reasonably caught up
-- Would "after tables copied" suffice? Sometimes no I think
-- Expose shutdown handle for replication task; rethink a Replicator::run interface
