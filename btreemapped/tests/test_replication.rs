@@ -1,14 +1,16 @@
 use anyhow::Result;
 use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema};
 use btreemapped_derive::{BTreeMapped, PgSchema};
-use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
+use etl::{
+    config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig},
+    types::PgNumeric,
+};
 use postgres_types::Type;
-use serde::Serialize;
 use utils::{create_postgres_client, setup_postgres_container};
 
 mod utils;
 
-#[derive(Debug, Clone, Serialize, BTreeMapped, PgSchema)]
+#[derive(Debug, Clone, BTreeMapped, PgSchema)]
 #[btreemap(index = ["id"])]
 pub struct TestRecord {
     #[pg_type(Type::INT8)]
@@ -17,6 +19,8 @@ pub struct TestRecord {
     pub name: Option<String>,
     #[pg_type(Type::INT4)]
     pub value: Option<i32>,
+    #[pg_type(Type::NUMERIC)]
+    pub price: Option<PgNumeric>,
 }
 
 async fn setup_database(host: &str, port: u16) -> Result<()> {
@@ -28,7 +32,8 @@ async fn setup_database(host: &str, port: u16) -> Result<()> {
             "CREATE TABLE test_records (
                 id BIGINT PRIMARY KEY,
                 name TEXT,
-                value INTEGER
+                value INTEGER,
+                price NUMERIC
             )",
             &[],
         )
@@ -44,17 +49,19 @@ async fn insert_test_data(host: &str, port: u16) -> Result<()> {
     let client = create_postgres_client(host, port).await?;
 
     // Insert test data
+    let price1: PgNumeric = "123.45".parse().unwrap();
+    let price2: PgNumeric = "678.90".parse().unwrap();
     client
         .execute(
-            "INSERT INTO test_records (id, name, value) VALUES ($1, $2, $3)",
-            &[&1i64, &"Alice", &100i32],
+            "INSERT INTO test_records (id, name, value, price) VALUES ($1, $2, $3, $4)",
+            &[&1i64, &"Alice", &100i32, &price1],
         )
         .await?;
 
     client
         .execute(
-            "INSERT INTO test_records (id, name, value) VALUES ($1, $2, $3)",
-            &[&2i64, &"Bob", &200i32],
+            "INSERT INTO test_records (id, name, value, price) VALUES ($1, $2, $3, $4)",
+            &[&2i64, &"Bob", &200i32, &price2],
         )
         .await?;
 
