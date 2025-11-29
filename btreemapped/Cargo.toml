@@ -20,7 +20,6 @@ sqlx = ["dep:sqlx"]
 [dependencies]
 anyhow = { workspace = true }
 async-stream = { workspace = true }
-async-trait = { workspace = true }
 btreemapped_derive = { version = "0.2.0", path = "../btreemapped_derive" }
 bytes = { workspace = true }
 futures = { workspace = true }

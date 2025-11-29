@@ -5,7 +5,6 @@ resolver = "2"
 [workspace.dependencies]
 anyhow = "1"
 async-stream = "0.3"
-async-trait = "*"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 env_logger = "0.11"
