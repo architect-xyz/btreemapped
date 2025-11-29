@@ -10,7 +10,7 @@ pub mod lvalue;
 pub mod replica;
 pub mod sink;
 // TODO: maybe pub(crate)
-pub mod sink_state;
+pub mod replication_state;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::{BTreeMapped, PgSchema};

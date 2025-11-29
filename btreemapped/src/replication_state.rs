@@ -1,16 +1,22 @@
 use etl::{
-    error::{ErrorKind, EtlResult},
+    error::{ErrorKind, EtlError, EtlResult},
     etl_error,
     state::table::TableReplicationPhase,
     store::{cleanup::CleanupStore, schema::SchemaStore, state::StateStore},
+    types::TableName,
 };
 use etl_postgres::types::{TableId, TableSchema};
 use parking_lot::Mutex;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+};
 
-/// Inner state of [`SinkState`]
+/// Inner state of [`ReplicationState`]
 #[derive(Debug)]
 struct Inner {
+    /// Registered BTreeMapSink metadata
+    sink_metadata: HashMap<String, Arc<OnceLock<TableMetadata>>>,
     /// Current replication state for each table - this is the authoritative source of truth
     /// for table states. Every table being replicated must have an entry here.
     table_replication_states: HashMap<TableId, TableReplicationPhase>,
@@ -27,20 +33,26 @@ struct Inner {
     table_mappings: HashMap<TableId, String>,
 }
 
+#[derive(Debug)]
+pub(crate) struct TableMetadata {
+    pub table_id: TableId,
+    pub table_schema: Arc<TableSchema>,
+}
+
 /// In-memory storage for ETL pipeline state and schema information.
 ///
-/// [`SinkState`] implements both [`StateStore`] and [`SchemaStore`] traits,
+/// [`ReplicationState`] implements both [`StateStore`] and [`SchemaStore`] traits,
 /// providing a complete storage solution that keeps all data in memory. This is
 /// ideal for testing, development, and scenarios where persistence is not required.
 ///
 /// All state information including table replication phases, schema definitions,
 /// and table mappings are stored in memory and will be lost on process restart.
 #[derive(Debug, Clone)]
-pub struct SinkState {
+pub struct ReplicationState {
     inner: Arc<Mutex<Inner>>,
 }
 
-impl SinkState {
+impl ReplicationState {
     /// Creates a new empty memory store.
     ///
     /// The store initializes with empty collections for all state and schema data.
@@ -48,6 +60,7 @@ impl SinkState {
     /// state and schema information.
     pub fn new() -> Self {
         let inner = Inner {
+            sink_metadata: HashMap::new(),
             table_replication_states: HashMap::new(),
             table_state_history: HashMap::new(),
             table_schemas: HashMap::new(),
@@ -56,15 +69,24 @@ impl SinkState {
 
         Self { inner: Arc::new(Mutex::new(inner)) }
     }
+
+    pub fn register_sink(
+        &self,
+        table_name: String,
+        metadata: Arc<OnceLock<TableMetadata>>,
+    ) {
+        let mut inner = self.inner.lock();
+        inner.sink_metadata.insert(table_name, metadata);
+    }
 }
 
-impl Default for SinkState {
+impl Default for ReplicationState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl StateStore for SinkState {
+impl StateStore for ReplicationState {
     async fn get_table_replication_state(
         &self,
         table_id: TableId,
@@ -156,8 +178,6 @@ impl StateStore for SinkState {
         Ok(inner.table_mappings.len())
     }
 
-    // TODO: what is the exact format of destination_table_id
-    // with respect to schemas, including the public schema?
     async fn store_table_mapping(
         &self,
         source_table_id: TableId,
@@ -170,7 +190,7 @@ impl StateStore for SinkState {
     }
 }
 
-impl SchemaStore for SinkState {
+impl SchemaStore for ReplicationState {
     async fn get_table_schema(
         &self,
         table_id: &TableId,
@@ -194,13 +214,28 @@ impl SchemaStore for SinkState {
 
     async fn store_table_schema(&self, table_schema: TableSchema) -> EtlResult<()> {
         let mut inner = self.inner.lock();
-        inner.table_schemas.insert(table_schema.id, Arc::new(table_schema));
+
+        let table_schema = Arc::new(table_schema);
+        let sink_table_name = normalized_table_name(&table_schema.name);
+
+        if let Some(meta) = inner.sink_metadata.get(&sink_table_name) {
+            if let Err(_) = meta.set(TableMetadata {
+                table_id: table_schema.id,
+                table_schema: table_schema.clone(),
+            }) {
+                Err::<_, EtlError>(
+                    (ErrorKind::DestinationError, SCHEMA_CHANGE_NOT_ALLOWED_ERROR).into(),
+                )?;
+            }
+        }
+
+        inner.table_schemas.insert(table_schema.id, table_schema);
 
         Ok(())
     }
 }
 
-impl CleanupStore for SinkState {
+impl CleanupStore for ReplicationState {
     async fn cleanup_table_state(&self, table_id: TableId) -> EtlResult<()> {
         let mut inner = self.inner.lock();
 
@@ -212,3 +247,16 @@ impl CleanupStore for SinkState {
         Ok(())
     }
 }
+
+/// Assuming the default schema is "public", normalize a full
+/// {schema}.{table} name by omitting the default schema.
+pub(crate) fn normalized_table_name(table_name: &TableName) -> String {
+    if table_name.schema == "public" {
+        table_name.name.to_string()
+    } else {
+        table_name.to_string()
+    }
+}
+
+static SCHEMA_CHANGE_NOT_ALLOWED_ERROR: &'static str =
+    "btreemapped destination does not tolerate online schema changes or table renames";
