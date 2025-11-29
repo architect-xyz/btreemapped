@@ -1,10 +1,7 @@
 use anyhow::Result;
 use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema};
 use btreemapped_derive::{BTreeMapped, PgSchema};
-use etl::{
-    config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig},
-    pipeline::Pipeline,
-};
+use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
 use serde::Serialize;
 
@@ -27,15 +24,17 @@ pub struct Foobar {
 async fn main() -> Result<()> {
     let replicator = BTreeMapReplicator::new();
     let replica = replicator.add_replica::<Foobar, 1>("foobars");
-    // start replication task
+
+    // start the replication task
     tokio::spawn(async move {
-        if let Err(e) = replication_task(replicator).await {
+        if let Err(e) = replicator.run(pipeline_config()).await {
             #[cfg(feature = "log")]
             log::error!("replication task failed with: {e:?}");
             #[cfg(not(feature = "log"))]
             panic!("replication task failed with: {e:?}");
         }
     });
+
     // periodically print the state of the replica
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
     loop {
@@ -51,8 +50,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn replication_task(replicator: BTreeMapReplicator) -> Result<()> {
-    let pg_config = PgConnectionConfig {
+fn pg_config() -> PgConnectionConfig {
+    PgConnectionConfig {
         host: "localhost".to_string(),
         port: 54320,
         name: "postgres".to_string(), // database name
@@ -60,26 +59,19 @@ async fn replication_task(replicator: BTreeMapReplicator) -> Result<()> {
         password: Some("postgres".to_string().into()),
         tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
         keepalive: None,
-    };
-    let pipeline_config = PipelineConfig {
+    }
+}
+
+fn pipeline_config() -> PipelineConfig {
+    PipelineConfig {
         id: 1,
         // publication name (from CREATE PUBLICATION);
         // this determines which tables are replicated to you
         publication_name: "foobars_pub".to_string(),
-        pg_connection: pg_config,
+        pg_connection: pg_config(),
         batch: BatchConfig { max_size: 100, max_fill_ms: 1000 },
         table_error_retry_delay_ms: 10000,
         table_error_retry_max_attempts: 5,
         max_table_sync_workers: 4,
-    };
-    // TODO: what is the slot name now?
-    // postgres replication slot name; this should be unique
-    // for each application instance that intends to replicate
-    //
-    // reference: https://www.postgresql.org/docs/current/logicaldecoding-explanation.html#LOGICALDECODING-REPLICATION-SLOTS
-    // Some("btreemapped_example_slot".to_string()),
-    let mut pipeline = Pipeline::new(pipeline_config, replicator.clone(), replicator);
-    pipeline.start().await?;
-    pipeline.wait().await?;
-    Ok(())
+    }
 }

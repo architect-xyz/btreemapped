@@ -3,9 +3,11 @@ use crate::{
     BTreeMapReplica, BTreeMapped,
 };
 use etl::{
+    config::PipelineConfig,
     destination::Destination,
     error::{ErrorKind, EtlError, EtlResult},
     etl_error,
+    pipeline::Pipeline,
     state::table::TableReplicationPhase,
     store::{cleanup::CleanupStore, schema::SchemaStore, state::StateStore},
     types::{Event, TableName, TableRow},
@@ -78,6 +80,13 @@ impl BTreeMapReplicator {
         let replica = BTreeMapReplica::new();
         inner.pending_sinks.insert(table_name.to_string(), Box::new(replica.clone()));
         replica
+    }
+
+    pub async fn run(self, pipeline_config: PipelineConfig) -> EtlResult<()> {
+        let mut pipeline = Pipeline::new(pipeline_config, self.clone(), self);
+        pipeline.start().await?;
+        pipeline.wait().await?;
+        Ok(())
     }
 }
 
