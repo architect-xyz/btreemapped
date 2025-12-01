@@ -14,14 +14,17 @@ version = "0.3.0"
 name = "basic"
 
 [features]
+all = ["env_logger", "rust_decimal", "sqlx"]
 derive = []
-sqlx = ["dep:sqlx"]
+sqlx = ["rust_decimal", "dep:sqlx"]
 
 [dependencies]
 anyhow = { workspace = true }
 async-stream = { workspace = true }
 btreemapped_derive = { version = "0.2.0", path = "../btreemapped_derive" }
 bytes = { workspace = true }
+chrono = { workspace = true }
+derive_more = { workspace = true }
 env_logger = { workspace = true, optional = true }
 futures = { workspace = true }
 log = { workspace = true, optional = true }
@@ -31,16 +34,18 @@ etl = { workspace = true }
 etl-postgres = { workspace = true }
 postgres-types = { workspace = true, features = ["with-serde_json-1"] }
 rand = { workspace = true }
-rust_decimal = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true, features = ["maths"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-postgres = { workspace = true }
 tokio-util = { workspace = true }
+trait-gen = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
 postgres-types = { workspace = true, features = [
     "with-chrono-0_4",
     "with-serde_json-1",
@@ -49,4 +54,3 @@ rust_decimal = { workspace = true }
 rust_decimal_macros = { workspace = true }
 testcontainers = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-tokio-postgres = { workspace = true }

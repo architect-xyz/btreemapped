@@ -1,27 +1,23 @@
+#![cfg(feature = "sqlx")]
+
 mod utils;
 
-#[cfg(feature = "sqlx")]
 use anyhow::Result;
-#[cfg(feature = "sqlx")]
-use btreemapped::PgJson;
-#[cfg(feature = "sqlx")]
+use btreemapped::{PgJson, PgNumeric};
 use rust_decimal::{prelude::FromPrimitive, Decimal};
-#[cfg(feature = "sqlx")]
+use rust_decimal_macros::dec;
 use sqlx::postgres::{PgPool, PgPoolOptions};
-#[cfg(feature = "sqlx")]
 use std::collections::BTreeMap;
-#[cfg(feature = "sqlx")]
 use utils::setup_postgres_container;
 
-#[cfg(feature = "sqlx")]
 #[derive(Debug, Clone, sqlx::FromRow, PartialEq)]
 struct JsonRecord {
     data1: PgJson<BTreeMap<String, String>>,
     data2: PgJson<BTreeMap<String, Decimal>>,
     data3: PgJson<BTreeMap<String, i32>>,
+    data4: PgNumeric,
 }
 
-#[cfg(feature = "sqlx")]
 async fn setup_table(pool: &PgPool) -> Result<()> {
     #[rustfmt::skip]
     sqlx::query(r#"
@@ -29,29 +25,29 @@ async fn setup_table(pool: &PgPool) -> Result<()> {
             id SERIAL PRIMARY KEY,
             data1 JSONB,
             data2 JSONB,
-            data3 JSON
+            data3 JSON,
+            data4 NUMERIC
         )"#
     ).execute(pool).await?;
 
     Ok(())
 }
 
-#[cfg(feature = "sqlx")]
 async fn insert_test_data(pool: &PgPool) -> Result<()> {
     #[rustfmt::skip]
     sqlx::query(r#"
-        INSERT INTO json_records (data1, data2, data3)
+        INSERT INTO json_records (data1, data2, data3, data4)
         VALUES (
             '{"str_key": "str_value"}', 
             '{"dec_key": 1.234}',
-            '{"num_key": 123}'
+            '{"num_key": 123}',
+            '123.45'::NUMERIC
         )
     "#).execute(pool).await?;
 
     Ok(())
 }
 
-#[cfg(feature = "sqlx")]
 #[tokio::test]
 async fn test_sqlx_decode() -> Result<()> {
     let (_container, port) = setup_postgres_container().await?;
@@ -77,7 +73,6 @@ async fn test_sqlx_decode() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "sqlx")]
 #[tokio::test]
 async fn test_sqlx_encode() -> Result<()> {
     let (_container, port) = setup_postgres_container().await?;
@@ -95,6 +90,7 @@ async fn test_sqlx_encode() -> Result<()> {
                 [("abc".to_string(), Decimal::ZERO)].into_iter(),
             )),
             data3: PgJson(BTreeMap::new()),
+            data4: dec!(123.45).into(),
         },
         JsonRecord {
             data1: PgJson(BTreeMap::from_iter(
@@ -108,16 +104,20 @@ async fn test_sqlx_encode() -> Result<()> {
             data3: PgJson(BTreeMap::from_iter(
                 [("aaa".to_string(), 123), ("bbb".to_string(), 456)].into_iter(),
             )),
+            data4: dec!(678.90).into(),
         },
     ];
 
     for record in &records {
-        sqlx::query("INSERT INTO json_records (data1, data2, data3) VALUES ($1, $2, $3)")
-            .bind(&record.data1)
-            .bind(&record.data2)
-            .bind(&record.data3)
-            .execute(&pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO json_records (data1, data2, data3, data4) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&record.data1)
+        .bind(&record.data2)
+        .bind(&record.data3)
+        .bind(&record.data4)
+        .execute(&pool)
+        .await?;
     }
 
     let queried_records =

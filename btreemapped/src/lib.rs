@@ -3,9 +3,9 @@
 //!
 //! TODO: fill out prose documentation here
 
+pub mod cell;
 pub mod json;
 pub mod lvalue;
-#[cfg(feature = "rust_decimal")]
 pub mod numeric;
 pub mod replica;
 pub mod replicator;
@@ -15,6 +15,7 @@ pub(crate) mod sink;
 pub use btreemapped_derive::{BTreeMapped, PgSchema};
 pub use json::PgJson;
 pub use lvalue::*;
+pub use numeric::PgNumeric;
 pub use replica::{
     BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
 };
