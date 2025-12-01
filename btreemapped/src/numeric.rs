@@ -125,19 +125,36 @@ impl sqlx::Decode<'_, sqlx::Postgres> for PgNumeric {
 }
 
 #[cfg(feature = "rust_decimal")]
-impl TryFrom<PgNumeric> for rust_decimal::Decimal {
-    type Error = BoxDynError;
+#[derive(Debug, thiserror::Error)]
+pub enum PgNumericConversionError {
+    #[error("Decimal does not support NaN")]
+    NaN,
+    #[error("Decimal does not support +Infinity")]
+    PositiveInfinity,
+    #[error("Decimal does not support -Infinity")]
+    NegativeInfinity,
+    #[error("invalid scale value for Pg NUMERIC: {0}")]
+    InvalidScale(u16),
+    #[error("value not representable as rust_decimal::Decimal")]
+    ValueNotRepresentable,
+    #[error("malformed value for Pg NUMERIC")]
+    MalformedValue,
+}
 
-    fn try_from(numeric: PgNumeric) -> Result<Self, BoxDynError> {
+#[cfg(feature = "rust_decimal")]
+impl TryFrom<PgNumeric> for rust_decimal::Decimal {
+    type Error = PgNumericConversionError;
+
+    fn try_from(numeric: PgNumeric) -> Result<Self, PgNumericConversionError> {
         rust_decimal::Decimal::try_from(&numeric)
     }
 }
 
 #[cfg(feature = "rust_decimal")]
 impl TryFrom<&'_ PgNumeric> for rust_decimal::Decimal {
-    type Error = BoxDynError;
+    type Error = PgNumericConversionError;
 
-    fn try_from(numeric: &'_ PgNumeric) -> Result<Self, BoxDynError> {
+    fn try_from(numeric: &'_ PgNumeric) -> Result<Self, PgNumericConversionError> {
         use rust_decimal::MathematicalOps;
 
         let (digits, sign, mut weight, scale) = match &numeric.0 {
@@ -145,13 +162,13 @@ impl TryFrom<&'_ PgNumeric> for rust_decimal::Decimal {
                 (digits, sign, *weight, *scale)
             }
             etl::types::PgNumeric::NaN => {
-                return Err("Decimal does not support NaN".into());
+                return Err(PgNumericConversionError::NaN);
             }
             etl::types::PgNumeric::PositiveInfinity => {
-                return Err("Decimal does not support +Infinity".into());
+                return Err(PgNumericConversionError::PositiveInfinity);
             }
             etl::types::PgNumeric::NegativeInfinity => {
-                return Err("Decimal does not support -Infinity".into());
+                return Err(PgNumericConversionError::NegativeInfinity);
             }
         };
 
@@ -161,7 +178,7 @@ impl TryFrom<&'_ PgNumeric> for rust_decimal::Decimal {
         }
 
         let scale = u32::try_from(scale)
-            .map_err(|_| format!("invalid scale value for Pg NUMERIC: {scale}"))?;
+            .map_err(|_| PgNumericConversionError::InvalidScale(scale))?;
 
         let mut value = rust_decimal::Decimal::ZERO;
 
@@ -169,17 +186,18 @@ impl TryFrom<&'_ PgNumeric> for rust_decimal::Decimal {
         for &digit in digits {
             let mul = rust_decimal::Decimal::from(10_000i16)
                 .checked_powi(weight as i64)
-                .ok_or("value not representable as rust_decimal::Decimal")?;
+                .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
 
             let part = rust_decimal::Decimal::from(digit)
                 .checked_mul(mul)
-                .ok_or("value not representable as rust_decimal::Decimal")?;
+                .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
 
             value = value
                 .checked_add(part)
-                .ok_or("value not representable as rust_decimal::Decimal")?;
+                .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
 
-            weight = weight.checked_sub(1).ok_or("weight underflowed")?;
+            weight =
+                weight.checked_sub(1).ok_or(PgNumericConversionError::MalformedValue)?;
         }
 
         match sign {
