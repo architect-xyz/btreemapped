@@ -12,12 +12,24 @@ use tokio_postgres::types::{FromSql, ToSql, Type};
 type BoxDynError = Box<dyn std::error::Error + Sync + Send>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct PgNumeric(pub(crate) etl::types::PgNumeric);
+// #[repr(transparent)]
+pub struct PgNumeric {
+    pub(crate) raw: etl::types::PgNumeric,
+    // CR alee: this should be a separate wrapper, PgRustDecimal
+    #[cfg(feature = "rust_decimal")]
+    pub(crate) parsed: rust_decimal::Decimal,
+}
 
 impl<'a> FromSql<'a> for PgNumeric {
     fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, BoxDynError> {
-        <etl::types::PgNumeric as FromSql<'a>>::from_sql(ty, raw).map(PgNumeric)
+        let raw = <etl::types::PgNumeric as FromSql<'a>>::from_sql(ty, raw)?;
+        #[cfg(feature = "rust_decimal")]
+        let parsed = numeric_to_decimal(&raw)?;
+        Ok(PgNumeric {
+            raw,
+            #[cfg(feature = "rust_decimal")]
+            parsed,
+        })
     }
 
     fn accepts(ty: &Type) -> bool {
@@ -31,7 +43,7 @@ impl ToSql for PgNumeric {
         ty: &Type,
         out: &mut bytes::BytesMut,
     ) -> Result<IsNull, BoxDynError> {
-        self.0.to_sql(ty, out)
+        self.raw.to_sql(ty, out)
     }
 
     fn accepts(ty: &Type) -> bool {
@@ -67,7 +79,7 @@ impl sqlx::Encode<'_, sqlx::Postgres> for PgNumeric {
         const POSITIVE_INFINITY_SIGN: u16 = 0xD000; // NUMERIC_PINF
         const NEGATIVE_INFINITY_SIGN: u16 = 0xF000; // NUMERIC_NINF
 
-        let (sign, weight, scale, digits) = match &self.0 {
+        let (sign, weight, scale, digits) = match &self.raw {
             etl::types::PgNumeric::NaN => (NAN_SIGN, &0i16, &0u16, &vec![]),
             etl::types::PgNumeric::PositiveInfinity => {
                 (POSITIVE_INFINITY_SIGN, &0i16, &0u16, &vec![])
@@ -110,15 +122,25 @@ impl sqlx::Decode<'_, sqlx::Postgres> for PgNumeric {
     ) -> Result<Self, sqlx::error::BoxDynError> {
         match value.format() {
             sqlx::postgres::PgValueFormat::Binary => {
-                let inner = etl::types::PgNumeric::from_sql(
+                let raw = etl::types::PgNumeric::from_sql(
                     &postgres_types::Type::NUMERIC, // NB alee: this is arbitrary, callee ignore
                     value.as_bytes()?,
                 )?;
-                Ok(PgNumeric(inner))
+                Ok(PgNumeric {
+                    #[cfg(feature = "rust_decimal")]
+                    parsed: numeric_to_decimal(&raw)?,
+                    raw,
+                })
             }
             sqlx::postgres::PgValueFormat::Text => {
-                let inner = value.as_str()?.parse::<etl::types::PgNumeric>()?;
-                Ok(PgNumeric(inner))
+                let raw = value.as_str()?.parse::<etl::types::PgNumeric>()?;
+                #[cfg(feature = "rust_decimal")]
+                let parsed = numeric_to_decimal(&raw)?;
+                Ok(PgNumeric {
+                    raw,
+                    #[cfg(feature = "rust_decimal")]
+                    parsed,
+                })
             }
         }
     }
@@ -142,165 +164,182 @@ pub enum PgNumericConversionError {
 }
 
 #[cfg(feature = "rust_decimal")]
-impl TryFrom<PgNumeric> for rust_decimal::Decimal {
-    type Error = PgNumericConversionError;
-
-    fn try_from(numeric: PgNumeric) -> Result<Self, PgNumericConversionError> {
-        rust_decimal::Decimal::try_from(&numeric)
+impl From<PgNumeric> for rust_decimal::Decimal {
+    fn from(numeric: PgNumeric) -> Self {
+        numeric.parsed
     }
 }
 
 #[cfg(feature = "rust_decimal")]
-impl TryFrom<&'_ PgNumeric> for rust_decimal::Decimal {
-    type Error = PgNumericConversionError;
-
-    fn try_from(numeric: &'_ PgNumeric) -> Result<Self, PgNumericConversionError> {
-        use rust_decimal::MathematicalOps;
-
-        let (digits, sign, mut weight, scale) = match &numeric.0 {
-            etl::types::PgNumeric::Value { ref digits, sign, weight, scale } => {
-                (digits, sign, *weight, *scale)
-            }
-            etl::types::PgNumeric::NaN => {
-                return Err(PgNumericConversionError::NaN);
-            }
-            etl::types::PgNumeric::PositiveInfinity => {
-                return Err(PgNumericConversionError::PositiveInfinity);
-            }
-            etl::types::PgNumeric::NegativeInfinity => {
-                return Err(PgNumericConversionError::NegativeInfinity);
-            }
-        };
-
-        if digits.is_empty() {
-            // Postgres returns an empty digit array for 0
-            return Ok(rust_decimal::Decimal::ZERO);
-        }
-
-        let scale = u32::try_from(scale)
-            .map_err(|_| PgNumericConversionError::InvalidScale(scale))?;
-
-        let mut value = rust_decimal::Decimal::ZERO;
-
-        // Sum over `digits`, multiply each by its weight and add it to `value`.
-        for &digit in digits {
-            let mul = rust_decimal::Decimal::from(10_000i16)
-                .checked_powi(weight as i64)
-                .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
-
-            let part = rust_decimal::Decimal::from(digit)
-                .checked_mul(mul)
-                .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
-
-            value = value
-                .checked_add(part)
-                .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
-
-            weight =
-                weight.checked_sub(1).ok_or(PgNumericConversionError::MalformedValue)?;
-        }
-
-        match sign {
-            etl::types::Sign::Positive => value.set_sign_positive(true),
-            etl::types::Sign::Negative => value.set_sign_negative(true),
-        }
-
-        value.rescale(scale);
-
-        Ok(value)
+impl From<&'_ PgNumeric> for rust_decimal::Decimal {
+    fn from(numeric: &'_ PgNumeric) -> Self {
+        numeric.parsed
     }
+}
+
+#[cfg(feature = "rust_decimal")]
+pub(crate) fn numeric_to_decimal(
+    numeric: &etl::types::PgNumeric,
+) -> Result<rust_decimal::Decimal, PgNumericConversionError> {
+    use rust_decimal::MathematicalOps;
+
+    let (digits, sign, mut weight, scale) = match numeric {
+        etl::types::PgNumeric::Value { ref digits, sign, weight, scale } => {
+            (digits, sign, *weight, *scale)
+        }
+        etl::types::PgNumeric::NaN => {
+            return Err(PgNumericConversionError::NaN);
+        }
+        etl::types::PgNumeric::PositiveInfinity => {
+            return Err(PgNumericConversionError::PositiveInfinity);
+        }
+        etl::types::PgNumeric::NegativeInfinity => {
+            return Err(PgNumericConversionError::NegativeInfinity);
+        }
+    };
+
+    if digits.is_empty() {
+        // Postgres returns an empty digit array for 0
+        return Ok(rust_decimal::Decimal::ZERO);
+    }
+
+    let scale = u32::try_from(scale)
+        .map_err(|_| PgNumericConversionError::InvalidScale(scale))?;
+
+    let mut value = rust_decimal::Decimal::ZERO;
+
+    // Sum over `digits`, multiply each by its weight and add it to `value`.
+    for &digit in digits {
+        let mul = rust_decimal::Decimal::from(10_000i16)
+            .checked_powi(weight as i64)
+            .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
+
+        let part = rust_decimal::Decimal::from(digit)
+            .checked_mul(mul)
+            .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
+
+        value = value
+            .checked_add(part)
+            .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
+
+        weight = weight.checked_sub(1).ok_or(PgNumericConversionError::MalformedValue)?;
+    }
+
+    match sign {
+        etl::types::Sign::Positive => value.set_sign_positive(true),
+        etl::types::Sign::Negative => value.set_sign_negative(true),
+    }
+
+    value.rescale(scale);
+
+    Ok(value)
 }
 
 #[cfg(feature = "rust_decimal")]
 impl From<rust_decimal::Decimal> for PgNumeric {
     fn from(value: rust_decimal::Decimal) -> Self {
-        PgNumeric::from(&value)
+        Self {
+            raw: decimal_to_numeric(&value),
+            #[cfg(feature = "rust_decimal")]
+            parsed: value,
+        }
     }
 }
 
 #[cfg(feature = "rust_decimal")]
 impl From<&'_ rust_decimal::Decimal> for PgNumeric {
-    // Impl has been manually validated.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    fn from(decimal: &rust_decimal::Decimal) -> Self {
-        if rust_decimal::Decimal::is_zero(decimal) {
-            return PgNumeric(etl::types::PgNumeric::Value {
-                sign: etl::types::Sign::Positive,
-                digits: vec![],
-                weight: 0,
-                scale: 0,
-            });
+    fn from(value: &rust_decimal::Decimal) -> Self {
+        Self {
+            raw: decimal_to_numeric(value),
+            #[cfg(feature = "rust_decimal")]
+            parsed: *value,
         }
+    }
+}
 
-        assert!(
-            (0u32..=28).contains(&decimal.scale()),
-            "decimal scale out of range {:?}",
-            decimal.unpack(),
-        );
+#[cfg(feature = "rust_decimal")]
+// Impl has been manually validated.
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+pub(crate) fn decimal_to_numeric(
+    decimal: &rust_decimal::Decimal,
+) -> etl::types::PgNumeric {
+    if rust_decimal::Decimal::is_zero(decimal) {
+        return etl::types::PgNumeric::Value {
+            sign: etl::types::Sign::Positive,
+            digits: vec![],
+            weight: 0,
+            scale: 0,
+        };
+    }
 
-        // Cannot overflow: always in the range [0, 28]
-        let scale = decimal.scale() as u16;
+    assert!(
+        (0u32..=28).contains(&decimal.scale()),
+        "decimal scale out of range {:?}",
+        decimal.unpack(),
+    );
 
-        let mut mantissa = decimal.mantissa().unsigned_abs();
+    // Cannot overflow: always in the range [0, 28]
+    let scale = decimal.scale() as u16;
 
-        // If our scale is not a multiple of 4, we need to go to the next multiple.
-        let groups_diff = scale % 4;
-        if groups_diff > 0 {
-            let remainder = 4 - groups_diff as u32;
-            let power = 10u32.pow(remainder) as u128;
+    let mut mantissa = decimal.mantissa().unsigned_abs();
 
-            // Impossible to overflow; 0 <= mantissa <= 2^96,
-            // and we're multiplying by at most 1,000 (giving us a result < 2^106)
-            mantissa *= power;
-        }
+    // If our scale is not a multiple of 4, we need to go to the next multiple.
+    let groups_diff = scale % 4;
+    if groups_diff > 0 {
+        let remainder = 4 - groups_diff as u32;
+        let power = 10u32.pow(remainder) as u128;
 
-        // Array to store max mantissa of Decimal in Postgres decimal format.
-        let mut digits = Vec::with_capacity(8);
+        // Impossible to overflow; 0 <= mantissa <= 2^96,
+        // and we're multiplying by at most 1,000 (giving us a result < 2^106)
+        mantissa *= power;
+    }
 
-        // Convert to base-10000.
-        while mantissa != 0 {
-            // Cannot overflow or wrap because of the modulus
-            digits.push((mantissa % 10_000) as i16);
-            mantissa /= 10_000;
-        }
+    // Array to store max mantissa of Decimal in Postgres decimal format.
+    let mut digits = Vec::with_capacity(8);
 
-        // We started with the low digits first, but they should actually be at the end.
-        digits.reverse();
+    // Convert to base-10000.
+    while mantissa != 0 {
+        // Cannot overflow or wrap because of the modulus
+        digits.push((mantissa % 10_000) as i16);
+        mantissa /= 10_000;
+    }
 
-        // Cannot overflow: strictly smaller than `scale`.
-        let digits_after_decimal = scale.div_ceil(4) as i16;
+    // We started with the low digits first, but they should actually be at the end.
+    digits.reverse();
 
-        // `mantissa` contains at most 29 decimal digits (log10(2^96)),
-        // split into at most 8 4-digit segments.
-        assert!(
-            digits.len() <= 8,
-            "digits.len() out of range: {}; unpacked: {:?}",
-            digits.len(),
-            decimal.unpack()
-        );
+    // Cannot overflow: strictly smaller than `scale`.
+    let digits_after_decimal = scale.div_ceil(4) as i16;
 
-        // Cannot overflow; at most 8
-        let num_digits = digits.len() as i16;
+    // `mantissa` contains at most 29 decimal digits (log10(2^96)),
+    // split into at most 8 4-digit segments.
+    assert!(
+        digits.len() <= 8,
+        "digits.len() out of range: {}; unpacked: {:?}",
+        digits.len(),
+        decimal.unpack()
+    );
 
-        // Find how many 4-digit segments should go before the decimal point.
-        // `weight = 0` puts just `digit[0]` before the decimal point, and the rest after.
-        let weight = num_digits - digits_after_decimal - 1;
+    // Cannot overflow; at most 8
+    let num_digits = digits.len() as i16;
 
-        // Remove non-significant zeroes.
-        while let Some(&0) = digits.last() {
-            digits.pop();
-        }
+    // Find how many 4-digit segments should go before the decimal point.
+    // `weight = 0` puts just `digit[0]` before the decimal point, and the rest after.
+    let weight = num_digits - digits_after_decimal - 1;
 
-        PgNumeric(etl::types::PgNumeric::Value {
-            sign: match decimal.is_sign_negative() {
-                false => etl::types::Sign::Positive,
-                true => etl::types::Sign::Negative,
-            },
-            // Cannot overflow; between 0 and 28
-            scale,
-            weight,
-            digits,
-        })
+    // Remove non-significant zeroes.
+    while let Some(&0) = digits.last() {
+        digits.pop();
+    }
+
+    etl::types::PgNumeric::Value {
+        sign: match decimal.is_sign_negative() {
+            false => etl::types::Sign::Positive,
+            true => etl::types::Sign::Negative,
+        },
+        // Cannot overflow; between 0 and 28
+        scale,
+        weight,
+        digits,
     }
 }
 
@@ -368,22 +407,22 @@ mod tests {
 
     #[test]
     fn test_nan_conversion_fails() {
-        let pg = PgNumeric(etl::types::PgNumeric::NaN);
-        let result = rust_decimal::Decimal::try_from(&pg);
+        let pg = etl::types::PgNumeric::NaN;
+        let result = numeric_to_decimal(&pg);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_positive_infinity_conversion_fails() {
-        let pg = PgNumeric(etl::types::PgNumeric::PositiveInfinity);
-        let result = rust_decimal::Decimal::try_from(&pg);
+        let pg = etl::types::PgNumeric::PositiveInfinity;
+        let result = numeric_to_decimal(&pg);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_negative_infinity_conversion_fails() {
-        let pg = PgNumeric(etl::types::PgNumeric::NegativeInfinity);
-        let result = rust_decimal::Decimal::try_from(&pg);
+        let pg = etl::types::PgNumeric::NegativeInfinity;
+        let result = numeric_to_decimal(&pg);
         assert!(result.is_err());
     }
 

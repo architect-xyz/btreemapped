@@ -160,7 +160,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             // use serde_json::from_value to convert from JSON
             quote! {
                 #name_str => {
-                    let _cell: #btreemapped::cell::Cell = v.into();
+                    let _cell: #btreemapped::cell::Cell = v.try_into()?;
                     let _json_val = TryInto::<serde_json::Value>::try_into(_cell)
                         .map_err(|e| anyhow::anyhow!("{e:?}"))
                         .with_context(|| format!("while converting column \"{}\" to serde_json::Value", #name_str))?;
@@ -176,7 +176,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                     // use an intermediate type to convert from SQL
                     quote! {
                         #name_str => {
-                            let _cell: #btreemapped::cell::Cell = v.into();
+                            let _cell: #btreemapped::cell::Cell = v.try_into()?;
                             let _i = TryInto::<#try_from_ty>::try_into(_cell)
                                 .map_err(|e| anyhow::anyhow!("{e:?}"))?;
                             #name = Some(_i.try_into()?);
@@ -189,7 +189,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         if is_option_type(ty) {
                             quote! {
                                 #name_str => {
-                                    let _cell: #btreemapped::cell::Cell = v.into();
+                                    let _cell: #btreemapped::cell::Cell = v.try_into()?;
                                     let _i = TryInto::<Option<String>>::try_into(_cell)
                                         .map_err(|e| anyhow::anyhow!("{e:?}"))
                                         .with_context(|| format!("while converting column \"{}\" to Option<String>", #name_str))?;
@@ -208,7 +208,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         } else {
                             quote! {
                                 #name_str => {
-                                    let _cell: #btreemapped::cell::Cell = v.into();
+                                    let _cell: #btreemapped::cell::Cell = v.try_into()?;
                                     let _i = TryInto::<String>::try_into(_cell)
                                         .map_err(|e| anyhow::anyhow!("{e:?}"))
                                         .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
@@ -222,7 +222,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         if is_option_type(ty) {
                             quote! {
                                 #name_str => {
-                                    let _cell: #btreemapped::cell::Cell = v.into();
+                                    let _cell: #btreemapped::cell::Cell = v.try_into()?;
                                     let _s = TryInto::<Option<String>>::try_into(_cell)
                                         .map_err(|e| anyhow::anyhow!("{e:?}"))
                                         .with_context(|| format!("while converting column \"{}\" to Option<String>", #name_str))?;
@@ -241,7 +241,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         } else {
                             quote! {
                                 #name_str => {
-                                    let _cell: #btreemapped::cell::Cell = v.into();
+                                    let _cell: #btreemapped::cell::Cell = v.try_into()?;
                                     let _s = TryInto::<String>::try_into(_cell)
                                         .map_err(|e| anyhow::anyhow!("{e:?}"))
                                         .with_context(|| format!("while converting column \"{}\" to String", #name_str))?;
@@ -255,7 +255,7 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                         // normal TryInto conversion
                         quote! {
                             #name_str => {
-                                let _cell: #btreemapped::cell::Cell = v.into();
+                                let _cell: #btreemapped::cell::Cell = v.try_into()?;
                                 #name = Some(
                                     _cell.try_into()
                                      .map_err(|e| anyhow::anyhow!("{e:?}"))

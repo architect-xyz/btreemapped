@@ -1,5 +1,7 @@
 //! Wrapper type for `etl::types::Cell` that adds primitive conversions.
 
+#[cfg(feature = "rust_decimal")]
+use crate::numeric::numeric_to_decimal;
 use crate::numeric::PgNumeric;
 use anyhow::anyhow;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
@@ -31,9 +33,11 @@ pub enum Cell {
     Array(ArrayCell),
 }
 
-impl From<etl::types::Cell> for Cell {
-    fn from(cell: etl::types::Cell) -> Self {
-        match cell {
+impl TryFrom<etl::types::Cell> for Cell {
+    type Error = anyhow::Error;
+
+    fn try_from(cell: etl::types::Cell) -> Result<Self, Self::Error> {
+        let inner = match cell {
             etl::types::Cell::Null => Cell::Null,
             etl::types::Cell::Bool(bool) => Cell::Bool(bool),
             etl::types::Cell::String(string) => Cell::String(string),
@@ -43,7 +47,11 @@ impl From<etl::types::Cell> for Cell {
             etl::types::Cell::I64(i64) => Cell::I64(i64),
             etl::types::Cell::F32(f32) => Cell::F32(f32),
             etl::types::Cell::F64(f64) => Cell::F64(f64),
-            etl::types::Cell::Numeric(numeric) => Cell::Numeric(PgNumeric(numeric)),
+            etl::types::Cell::Numeric(numeric) => Cell::Numeric(PgNumeric {
+                #[cfg(feature = "rust_decimal")]
+                parsed: numeric_to_decimal(&numeric)?,
+                raw: numeric,
+            }),
             etl::types::Cell::Date(date) => Cell::Date(date),
             etl::types::Cell::Time(time) => Cell::Time(time),
             etl::types::Cell::Timestamp(timestamp) => Cell::Timestamp(timestamp),
@@ -53,8 +61,9 @@ impl From<etl::types::Cell> for Cell {
             etl::types::Cell::Uuid(uuid) => Cell::Uuid(uuid),
             etl::types::Cell::Json(json) => Cell::Json(json),
             etl::types::Cell::Bytes(bytes) => Cell::Bytes(bytes),
-            etl::types::Cell::Array(array) => Cell::Array(array.into()),
-        }
+            etl::types::Cell::Array(array) => Cell::Array(array.try_into()?),
+        };
+        Ok(inner)
     }
 }
 
@@ -79,9 +88,11 @@ pub enum ArrayCell {
     Bytes(Vec<Option<Vec<u8>>>),
 }
 
-impl From<etl::types::ArrayCell> for ArrayCell {
-    fn from(array: etl::types::ArrayCell) -> Self {
-        match array {
+impl TryFrom<etl::types::ArrayCell> for ArrayCell {
+    type Error = anyhow::Error;
+
+    fn try_from(array: etl::types::ArrayCell) -> Result<Self, Self::Error> {
+        let inner = match array {
             etl::types::ArrayCell::Bool(bool) => ArrayCell::Bool(bool),
             etl::types::ArrayCell::String(string) => ArrayCell::String(string),
             etl::types::ArrayCell::I16(i16) => ArrayCell::I16(i16),
@@ -107,9 +118,21 @@ impl From<etl::types::ArrayCell> for ArrayCell {
                 // I don't care enough to take this risk yet though.
                 //
                 // [1] https://www.reddit.com/r/rust/comments/1ez6f2c/any_safe_way_to_transmute_vecoptionfoo_to_vecfoo/
-                ArrayCell::Numeric(
-                    numeric.into_iter().map(|n| n.map(PgNumeric)).collect(),
-                )
+                let mut res = vec![];
+                for val in numeric {
+                    if let Some(val) = val {
+                        #[cfg(feature = "rust_decimal")]
+                        let parsed = numeric_to_decimal(&val)?;
+                        res.push(Some(PgNumeric {
+                            raw: val,
+                            #[cfg(feature = "rust_decimal")]
+                            parsed,
+                        }));
+                    } else {
+                        res.push(None);
+                    }
+                }
+                ArrayCell::Numeric(res)
             }
             etl::types::ArrayCell::Date(date) => ArrayCell::Date(date),
             etl::types::ArrayCell::Time(time) => ArrayCell::Time(time),
@@ -122,7 +145,8 @@ impl From<etl::types::ArrayCell> for ArrayCell {
             etl::types::ArrayCell::Uuid(uuid) => ArrayCell::Uuid(uuid),
             etl::types::ArrayCell::Json(json) => ArrayCell::Json(json),
             etl::types::ArrayCell::Bytes(bytes) => ArrayCell::Bytes(bytes),
-        }
+        };
+        Ok(inner)
     }
 }
 
