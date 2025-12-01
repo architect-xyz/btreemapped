@@ -1,10 +1,8 @@
 //! Wrapper type for `etl::types::Cell` that adds primitive conversions.
 
-#[cfg(feature = "rust_decimal")]
-use crate::numeric::numeric_to_decimal;
-use crate::numeric::PgNumeric;
 use anyhow::anyhow;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use etl::types::PgNumeric;
 use trait_gen::trait_gen;
 use uuid::Uuid;
 
@@ -47,11 +45,7 @@ impl TryFrom<etl::types::Cell> for Cell {
             etl::types::Cell::I64(i64) => Cell::I64(i64),
             etl::types::Cell::F32(f32) => Cell::F32(f32),
             etl::types::Cell::F64(f64) => Cell::F64(f64),
-            etl::types::Cell::Numeric(numeric) => Cell::Numeric(PgNumeric {
-                #[cfg(feature = "rust_decimal")]
-                parsed: numeric_to_decimal(&numeric)?,
-                raw: numeric,
-            }),
+            etl::types::Cell::Numeric(numeric) => Cell::Numeric(numeric),
             etl::types::Cell::Date(date) => Cell::Date(date),
             etl::types::Cell::Time(time) => Cell::Time(time),
             etl::types::Cell::Timestamp(timestamp) => Cell::Timestamp(timestamp),
@@ -101,39 +95,7 @@ impl TryFrom<etl::types::ArrayCell> for ArrayCell {
             etl::types::ArrayCell::I64(i64) => ArrayCell::I64(i64),
             etl::types::ArrayCell::F32(f32) => ArrayCell::F32(f32),
             etl::types::ArrayCell::F64(f64) => ArrayCell::F64(f64),
-            etl::types::ArrayCell::Numeric(numeric) => {
-                // CR alee: we can avoid this allocation with the following
-                // magic [1], assuming PgNumeric is still #[repr(transparent)]
-                //
-                // unsafe fn transmute_vec<T, U>(v: Vec<T>) -> Vec<U> {
-                //   unsafe {
-                //     let len = v.len();
-                //     let capacity = v.capacity();
-                //     let ptr = v.as_mut_ptr();
-                //     std::mem::forget(v);
-                //     Vec::from_raw_parts(ptr as *mut &T, len, capacity)
-                //   }
-                // }
-                //
-                // I don't care enough to take this risk yet though.
-                //
-                // [1] https://www.reddit.com/r/rust/comments/1ez6f2c/any_safe_way_to_transmute_vecoptionfoo_to_vecfoo/
-                let mut res = vec![];
-                for val in numeric {
-                    if let Some(val) = val {
-                        #[cfg(feature = "rust_decimal")]
-                        let parsed = numeric_to_decimal(&val)?;
-                        res.push(Some(PgNumeric {
-                            raw: val,
-                            #[cfg(feature = "rust_decimal")]
-                            parsed,
-                        }));
-                    } else {
-                        res.push(None);
-                    }
-                }
-                ArrayCell::Numeric(res)
-            }
+            etl::types::ArrayCell::Numeric(numeric) => ArrayCell::Numeric(numeric),
             etl::types::ArrayCell::Date(date) => ArrayCell::Date(date),
             etl::types::ArrayCell::Time(time) => ArrayCell::Time(time),
             etl::types::ArrayCell::Timestamp(timestamp) => {
@@ -187,3 +149,32 @@ impl TryFrom<Cell> for Vec<Option<T>> {
         }
     }
 }
+
+#[cfg(feature = "rust_decimal")]
+impl TryFrom<Cell> for rust_decimal::Decimal {
+    type Error = crate::numeric::PgNumericConversionError;
+
+    fn try_from(cell: Cell) -> Result<Self, Self::Error> {
+        match cell {
+            Cell::Numeric(numeric) => crate::numeric::numeric_to_decimal(&numeric),
+            _ => Err(crate::numeric::PgNumericConversionError::MalformedValue),
+        }
+    }
+}
+
+#[cfg(feature = "rust_decimal")]
+impl TryFrom<Cell> for Option<rust_decimal::Decimal> {
+    type Error = crate::numeric::PgNumericConversionError;
+
+    fn try_from(cell: Cell) -> Result<Self, Self::Error> {
+        match cell {
+            Cell::Null => Ok(None),
+            Cell::Numeric(numeric) => {
+                crate::numeric::numeric_to_decimal(&numeric).map(Some)
+            }
+            _ => Err(crate::numeric::PgNumericConversionError::MalformedValue),
+        }
+    }
+}
+
+// TODO: add ArrayCell implementations for rust_decimal

@@ -174,12 +174,30 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             match field_try_from.get(name) {
                 Some(try_from_ty) => {
                     // use an intermediate type to convert from SQL
-                    quote! {
-                        #name_str => {
-                            let _cell: #btreemapped::cell::Cell = v.try_into()?;
-                            let _i = TryInto::<#try_from_ty>::try_into(_cell)
-                                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-                            #name = Some(_i.try_into()?);
+                    if is_option_type(ty) {
+                        quote! {
+                            #name_str => {
+                                let _cell: #btreemapped::cell::Cell = v.try_into()?;
+                                let _i = TryInto::<Option<#try_from_ty>>::try_into(_cell)
+                                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                                match _i {
+                                    Some(_j) => {
+                                        #name = Some(Some(_j.try_into()?));
+                                    }
+                                    None => {
+                                        #name = Some(None);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #name_str => {
+                                let _cell: #btreemapped::cell::Cell = v.try_into()?;
+                                let _i = TryInto::<#try_from_ty>::try_into(_cell)
+                                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                                #name = Some(_i.try_into()?);
+                            }
                         }
                     }
                 }

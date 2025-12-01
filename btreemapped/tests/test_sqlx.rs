@@ -3,9 +3,8 @@
 mod utils;
 
 use anyhow::Result;
-use btreemapped::{PgJson, PgNumeric};
+use btreemapped::PgJson;
 use rust_decimal::{prelude::FromPrimitive, Decimal};
-use rust_decimal_macros::dec;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::collections::BTreeMap;
 use utils::setup_postgres_container;
@@ -15,7 +14,6 @@ struct JsonRecord {
     data1: PgJson<BTreeMap<String, String>>,
     data2: PgJson<BTreeMap<String, Decimal>>,
     data3: PgJson<BTreeMap<String, i32>>,
-    data4: PgNumeric,
 }
 
 async fn setup_table(pool: &PgPool) -> Result<()> {
@@ -26,7 +24,6 @@ async fn setup_table(pool: &PgPool) -> Result<()> {
             data1 JSONB,
             data2 JSONB,
             data3 JSON,
-            data4 NUMERIC
         )"#
     ).execute(pool).await?;
 
@@ -41,7 +38,6 @@ async fn insert_test_data(pool: &PgPool) -> Result<()> {
             '{"str_key": "str_value"}', 
             '{"dec_key": 1.234}',
             '{"num_key": 123}',
-            '123.45'::NUMERIC
         )
     "#).execute(pool).await?;
 
@@ -90,7 +86,6 @@ async fn test_sqlx_encode() -> Result<()> {
                 [("abc".to_string(), Decimal::ZERO)].into_iter(),
             )),
             data3: PgJson(BTreeMap::new()),
-            data4: dec!(123.45).into(),
         },
         JsonRecord {
             data1: PgJson(BTreeMap::from_iter(
@@ -104,20 +99,16 @@ async fn test_sqlx_encode() -> Result<()> {
             data3: PgJson(BTreeMap::from_iter(
                 [("aaa".to_string(), 123), ("bbb".to_string(), 456)].into_iter(),
             )),
-            data4: dec!(678.90).into(),
         },
     ];
 
     for record in &records {
-        sqlx::query(
-            "INSERT INTO json_records (data1, data2, data3, data4) VALUES ($1, $2, $3, $4)",
-        )
-        .bind(&record.data1)
-        .bind(&record.data2)
-        .bind(&record.data3)
-        .bind(&record.data4)
-        .execute(&pool)
-        .await?;
+        sqlx::query("INSERT INTO json_records (data1, data2, data3) VALUES ($1, $2, $3)")
+            .bind(&record.data1)
+            .bind(&record.data2)
+            .bind(&record.data3)
+            .execute(&pool)
+            .await?;
     }
 
     let queried_records =

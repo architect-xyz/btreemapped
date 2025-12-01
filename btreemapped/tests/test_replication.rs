@@ -1,12 +1,11 @@
 #![cfg(feature = "rust_decimal")]
 
 use anyhow::Result;
-use btreemapped::{
-    replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgNumeric, PgSchema,
-};
+use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema};
 use btreemapped_derive::{BTreeMapped, PgSchema};
 use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
+use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use utils::{create_postgres_client, setup_postgres_container};
 
@@ -22,7 +21,7 @@ pub struct TestRecord {
     #[pg_type(Type::INT4)]
     pub value: Option<i32>,
     #[pg_type(Type::NUMERIC)]
-    pub price: Option<PgNumeric>,
+    pub price: Option<Decimal>,
 }
 
 async fn setup_database(host: &str, port: u16) -> Result<()> {
@@ -51,19 +50,17 @@ async fn insert_test_data(host: &str, port: u16) -> Result<()> {
     let client = create_postgres_client(host, port).await?;
 
     // Insert test data
-    let price1: PgNumeric = dec!(123.45).into();
-    let price2: PgNumeric = dec!(678.90).into();
     client
         .execute(
             "INSERT INTO test_records (id, name, value, price) VALUES ($1, $2, $3, $4)",
-            &[&1i64, &"Alice", &100i32, &price1],
+            &[&1i64, &"Alice", &100i32, &dec!(123.45)],
         )
         .await?;
 
     client
         .execute(
             "INSERT INTO test_records (id, name, value, price) VALUES ($1, $2, $3, $4)",
-            &[&2i64, &"Bob", &200i32, &price2],
+            &[&2i64, &"Bob", &200i32, &dec!(678.90)],
         )
         .await?;
 

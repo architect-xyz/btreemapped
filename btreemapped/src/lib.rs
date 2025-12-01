@@ -6,7 +6,7 @@
 pub mod cell;
 pub mod json;
 pub mod lvalue;
-pub mod numeric;
+pub(crate) mod numeric;
 pub mod replica;
 pub mod replicator;
 pub(crate) mod sink;
@@ -15,7 +15,6 @@ pub(crate) mod sink;
 pub use btreemapped_derive::{BTreeMapped, PgSchema};
 pub use json::PgJson;
 pub use lvalue::*;
-pub use numeric::PgNumeric;
 pub use replica::{
     BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
 };
