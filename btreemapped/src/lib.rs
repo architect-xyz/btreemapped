@@ -3,25 +3,27 @@
 //!
 //! TODO: fill out prose documentation here
 
+pub mod cell;
 pub mod json;
 pub mod lvalue;
-pub mod multi_sink;
+pub(crate) mod numeric;
 pub mod replica;
-pub mod sink;
+pub mod replicator;
+pub(crate) mod sink;
 
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::{BTreeMapped, PgSchema};
 pub use json::PgJson;
 pub use lvalue::*;
-pub use multi_sink::MultiBTreeMapSink;
 pub use replica::{
     BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
 };
-pub use sink::BTreeMapSink;
+pub use replicator::BTreeMapReplicator;
 
 pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     type LIndex: HasArity<N>
         + std::fmt::Debug
+        + Clone
         + Eq
         + Ord
         + std::hash::Hash
@@ -42,17 +44,17 @@ pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     /// Build the index value for this struct.
     fn index(&self) -> Self::Index;
 
-    /// Parse a row from pg_replica into a full struct.
+    /// Parse a row from etl into a full struct.
     fn parse_row(
-        schema: &pg_replicate::table::TableSchema,
-        row: pg_replicate::conversions::table_row::TableRow,
+        schema: &etl_postgres::types::TableSchema,
+        row: etl::types::TableRow,
     ) -> anyhow::Result<Self>;
 
-    /// Parse a row from pg_replica into just the index.
+    /// Parse a row from etl into just the index.
     /// Used for UPDATE/DELETE operations.
     fn parse_row_index(
-        schema: &pg_replicate::table::TableSchema,
-        row: pg_replicate::conversions::table_row::TableRow,
+        schema: &etl_postgres::types::TableSchema,
+        row: etl::types::TableRow,
     ) -> anyhow::Result<Self::Index>;
 }
 

@@ -15,15 +15,17 @@ todo:
 - Use fully qualified name for LIndex* in btreemapped_derive, so users don't have to import it explicitly
 - https://www.morling.dev/blog/mastering-postgres-replication-slots/
 - Study arithmetic checksum properties to see what's best for checking replication success. Although, pg_current_wal_lsn()isn't transactional, so it's not clear how you would get a stable reference. There might be some way to "dye" the databaseor leave a breadcrumb. Or, try this crazy shit: https://stackoverflow.com/questions/69459481/retrieve-lsn-of-postgres-database-during-transaction 
+- Move the Cell conversion to this crate, so we don't need to upstream it to etl
+- Upstream TCP keepalive config to etl
+- Test schema changes, particularly alter-table-alter-column-set-default, and alter-table-add-column-set-default
+- BTreeMap is just one choice of data structure. It might be worth separating the choice of data structure vs the relational guarantees; this goes hand-in-hand with the mapping functions
+- I bet Arc<str> or Box<str> solves a lot of String/str coerce problems! E.g. Looking up tuple, could you look up a BTreeMap<(Arc<str>, Arc<str>), V> by an (&str, &str)?
 
 ## Running the examples
 
 ```bash
 # start a postgres
-docker compose up
-
-# setup the example table and publication
-psql -d "host=localhost port=54320 user=postgres password=postgres" -f ./example.sql
+docker compose up postgres
 
 # run the replication example
 cargo run --example basic

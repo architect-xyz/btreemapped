@@ -1,15 +1,14 @@
-use anyhow::Result;
-use btreemapped::PgJson;
-use rust_decimal::{prelude::FromPrimitive, Decimal};
-use std::collections::BTreeMap;
-use utils::setup_postgres_container;
+#![cfg(feature = "sqlx")]
 
 mod utils;
 
-#[cfg(feature = "sqlx")]
+use anyhow::Result;
+use btreemapped::PgJson;
+use rust_decimal::{prelude::FromPrimitive, Decimal};
 use sqlx::postgres::{PgPool, PgPoolOptions};
+use std::collections::BTreeMap;
+use utils::setup_postgres_container;
 
-#[cfg(feature = "sqlx")]
 #[derive(Debug, Clone, sqlx::FromRow, PartialEq)]
 struct JsonRecord {
     data1: PgJson<BTreeMap<String, String>>,
@@ -17,7 +16,6 @@ struct JsonRecord {
     data3: PgJson<BTreeMap<String, i32>>,
 }
 
-#[cfg(feature = "sqlx")]
 async fn setup_table(pool: &PgPool) -> Result<()> {
     #[rustfmt::skip]
     sqlx::query(r#"
@@ -25,29 +23,27 @@ async fn setup_table(pool: &PgPool) -> Result<()> {
             id SERIAL PRIMARY KEY,
             data1 JSONB,
             data2 JSONB,
-            data3 JSON
+            data3 JSON,
         )"#
     ).execute(pool).await?;
 
     Ok(())
 }
 
-#[cfg(feature = "sqlx")]
 async fn insert_test_data(pool: &PgPool) -> Result<()> {
     #[rustfmt::skip]
     sqlx::query(r#"
-        INSERT INTO json_records (data1, data2, data3)
+        INSERT INTO json_records (data1, data2, data3, data4)
         VALUES (
             '{"str_key": "str_value"}', 
             '{"dec_key": 1.234}',
-            '{"num_key": 123}'
+            '{"num_key": 123}',
         )
     "#).execute(pool).await?;
 
     Ok(())
 }
 
-#[cfg(feature = "sqlx")]
 #[tokio::test]
 async fn test_sqlx_decode() -> Result<()> {
     let (_container, port) = setup_postgres_container().await?;
@@ -73,7 +69,6 @@ async fn test_sqlx_decode() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "sqlx")]
 #[tokio::test]
 async fn test_sqlx_encode() -> Result<()> {
     let (_container, port) = setup_postgres_container().await?;

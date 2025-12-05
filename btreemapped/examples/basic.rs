@@ -1,13 +1,10 @@
 use anyhow::Result;
-use btreemapped::{BTreeMapSink, BTreeMapped, LIndex1, PgSchema};
+use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema};
 use btreemapped_derive::{BTreeMapped, PgSchema};
-use pg_replicate::pipeline::{
-    batching::{data_pipeline::BatchDataPipeline, BatchConfig},
-    sources::postgres::{PostgresSource, TableNamesFrom},
-    PipelineAction,
-};
+use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
 use serde::Serialize;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Serialize, BTreeMapped, PgSchema)]
 #[btreemap(index = ["id"])]
@@ -26,53 +23,82 @@ pub struct Foobar {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let sink = BTreeMapSink::<Foobar, 1>::new("foobars");
-    let replica = sink.replica.clone();
-    // start replication task
-    tokio::spawn(async move {
-        if let Err(e) = replication_task(sink).await {
+    #[cfg(feature = "env_logger")]
+    env_logger::init();
+
+    let replicator = BTreeMapReplicator::new();
+    let replica = replicator.add_replica::<Foobar, 1>("foobars");
+    let cancel_token = CancellationToken::new();
+    let synced = replicator.synced();
+
+    // cancel the replication task after N seconds if CANCEL_AFTER_SECONDS is set
+    if let Ok(cancel_after_seconds) = std::env::var("CANCEL_AFTER_SECONDS") {
+        let secs = cancel_after_seconds.parse::<u64>().unwrap();
+        let cancel_token = cancel_token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            eprintln!("cancelling replication task...");
+            cancel_token.cancel();
+        });
+    }
+
+    // start the replication task
+    let replication_task = tokio::spawn(async move {
+        if let Err(e) = replicator.run(pipeline_config(), Some(cancel_token)).await {
             #[cfg(feature = "log")]
             log::error!("replication task failed with: {e:?}");
             #[cfg(not(feature = "log"))]
             panic!("replication task failed with: {e:?}");
         }
     });
+
+    // wait for all tables to be synced
+    eprintln!("waiting for all tables to be synced...");
+    synced.await;
+    eprintln!("all tables are synced");
+
     // periodically print the state of the replica
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
     loop {
-        interval.tick().await;
         let state = replica.read();
         eprintln!("{state:?}");
         // to trigger this println, insert a row into foobars with id 1337
         if let Some(row_with_id_1337) = state.get(&(1337,).into()) {
             eprintln!("row with id 1337: {row_with_id_1337:?}");
         }
+        interval.tick().await;
+        if replication_task.is_finished() {
+            eprintln!("replication task finished");
+            break;
+        }
     }
-    #[allow(unreachable_code)]
+
     Ok(())
 }
 
-async fn replication_task(sink: BTreeMapSink<Foobar, 1>) -> Result<()> {
-    let pg_source = PostgresSource::new(
-        "localhost",                  // host
-        54320,                        // port
-        "postgres",                   // database
-        "postgres",                   // username
-        Some("postgres".to_string()), // password
-        // postgres replication slot name; this should be unique
-        // for each application instance that intends to replicate
-        //
-        // reference: https://www.postgresql.org/docs/current/logicaldecoding-explanation.html#LOGICALDECODING-REPLICATION-SLOTS
-        Some("btreemapped_example_slot".to_string()),
+fn pg_config() -> PgConnectionConfig {
+    PgConnectionConfig {
+        host: "localhost".to_string(),
+        port: 54320,
+        name: "postgres".to_string(), // database name
+        username: "postgres".to_string(),
+        password: Some("postgres".to_string().into()),
+        tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+        keepalive: None,
+    }
+}
+
+fn pipeline_config() -> PipelineConfig {
+    PipelineConfig {
+        id: 1,
         // publication name (from CREATE PUBLICATION);
         // this determines which tables are replicated to you
-        TableNamesFrom::Publication("foobars_pub".to_string()),
-    )
-    .await?;
-    let batch_config = BatchConfig::new(100, std::time::Duration::from_secs(1));
-    let mut pipeline =
-        BatchDataPipeline::new(pg_source, sink, PipelineAction::Both, batch_config);
-    let pipeline_fut = pipeline.start();
-    pipeline_fut.await?;
-    Ok(())
+        publication_name: "foobars_pub".to_string(),
+        pg_connection: pg_config(),
+        batch: BatchConfig { max_size: 100, max_fill_ms: 1000 },
+        table_error_retry_delay_ms: 10000,
+        table_error_retry_max_attempts: 5,
+        max_table_sync_workers: 4,
+        slot_prefix: "examples_basic".to_string(),
+    }
 }
