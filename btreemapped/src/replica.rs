@@ -29,6 +29,109 @@ pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
     pub updates: Vec<(T::Index, Option<T>)>,
 }
 
+/// **EXPERIMENTAL**: may be removed at any time
+pub enum BTreeOperation<'a, T: BTreeMapped<N>, const N: usize> {
+    Insert(&'a T),
+    Remove(&'a T::Index),
+}
+
+/// **EXPERIMENTAL**: may be removed at any time
+pub struct BTreeOperationIter<'a, T: BTreeMapped<N>, const N: usize> {
+    i: usize,
+    j: usize,
+    snapshot: Option<&'a [T]>,
+    updates: &'a [(T::Index, Option<T>)],
+}
+
+impl<'a, T: BTreeMapped<N>, const N: usize> Iterator for BTreeOperationIter<'a, T, N> {
+    type Item = BTreeOperation<'a, T, N>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(snapshot) = &self.snapshot {
+            if self.j < snapshot.len() {
+                let t = &snapshot[self.j];
+                self.j += 1;
+                return Some(BTreeOperation::Insert(t));
+            }
+        }
+        if self.i < self.updates.len() {
+            let (i, t) = &self.updates[self.i];
+            self.i += 1;
+            Some(match t {
+                Some(t) => BTreeOperation::Insert(&t),
+                None => BTreeOperation::Remove(i),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: BTreeMapped<N>, const N: usize> BTreeUpdate<T, N> {
+    /// **EXPERIMENTAL**: may be removed at any time
+    pub fn iter_operations(&self) -> BTreeOperationIter<'_, T, N> {
+        BTreeOperationIter {
+            i: 0,
+            j: 0,
+            snapshot: self.snapshot.as_deref(),
+            updates: &self.updates,
+        }
+    }
+}
+
+/// **EXPERIMENTAL**: may be removed at any time
+#[derive(Debug, derive_more::Deref)]
+pub struct DerivedBTreeMap<T: BTreeMapped<N>, const N: usize, I, K, F, V>
+where
+    I: Fn(&T::Index) -> K,
+    F: Fn(&T) -> V,
+    K: Ord,
+{
+    #[deref]
+    pub map: BTreeMap<K, V>,
+    pub map_index: I,
+    pub map_value: F,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: BTreeMapped<N>, const N: usize, I, K, F, V> DerivedBTreeMap<T, N, I, K, F, V>
+where
+    I: Fn(&T::Index) -> K,
+    F: Fn(&T) -> V,
+    K: Ord,
+{
+    pub fn new(map_index: I, map_value: F) -> Self {
+        Self {
+            map: BTreeMap::new(),
+            map_index,
+            map_value,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub fn apply_update(&mut self, update: &BTreeUpdate<T, N>) {
+        if let Some(snapshot) = &update.snapshot {
+            for t in snapshot {
+                let k = (self.map_index)(&t.index());
+                let v = (self.map_value)(t);
+                self.map.insert(k, v);
+            }
+        }
+        for (i, t) in &update.updates {
+            let k = (self.map_index)(&i);
+            match t {
+                Some(t) => {
+                    let v = (self.map_value)(t);
+                    self.map.insert(k, v);
+                }
+                None => {
+                    self.map.remove(&k);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Error)]
 pub enum BTreeUpdateStreamError {
     #[error("seqno skipped")]
@@ -250,6 +353,47 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         BTreeSnapshot { seqid: replica.seqid, seqno: replica.seqno, snapshot }
     }
 
+    pub fn subscribe_with_snapshot(
+        &self,
+    ) -> (
+        Arc<BTreeUpdate<T, N>>,
+        impl Stream<Item = Result<Arc<BTreeUpdate<T, N>>, BTreeUpdateStreamError>>,
+    ) {
+        let mut updates = self.updates.subscribe();
+        let snap = self.snapshot();
+        let mut last_seqno = snap.seqno;
+        let snap_as_update = Arc::new(BTreeUpdate {
+            seqid: snap.seqid,
+            seqno: snap.seqno,
+            snapshot: Some(snap.snapshot),
+            updates: vec![],
+        });
+        let stream = try_stream! {
+            loop {
+                match updates.recv().await {
+                    Ok(up) => {
+                        if up.seqno <= last_seqno {
+                            continue;
+                        } else if up.seqno == last_seqno + 1 {
+                            last_seqno = up.seqno;
+                            yield up;
+                        } else {
+                            Err(BTreeUpdateStreamError::SeqnoSkip)?;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        Err(BTreeUpdateStreamError::Lagged)?;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        Err(BTreeUpdateStreamError::Closed)?;
+                    }
+                }
+            }
+        };
+        (snap_as_update, stream)
+    }
+
+    // TODO: is there a way to avoid repeating code with `subscribe_with_snapshot`?
     /// Subscribe to a self-contained updates stream.  The first element is
     /// guaranteed to contain a snapshot, and subsequent updates guaranteed
     /// to be in strict seqno order.
