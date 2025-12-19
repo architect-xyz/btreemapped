@@ -311,6 +311,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         (snap_as_update, stream)
     }
 
+    // TODO: is there a way to avoid repeating code with `subscribe_with_snapshot`?
     /// Subscribe to a self-contained updates stream.  The first element is
     /// guaranteed to contain a snapshot, and subsequent updates guaranteed
     /// to be in strict seqno order.
