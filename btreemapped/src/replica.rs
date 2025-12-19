@@ -29,6 +29,57 @@ pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
     pub updates: Vec<(T::Index, Option<T>)>,
 }
 
+/// **EXPERIMENTAL**: may be removed at any time
+pub enum BTreeOperation<'a, T: BTreeMapped<N>, const N: usize> {
+    Insert(&'a T),
+    Remove(&'a T::Index),
+}
+
+/// **EXPERIMENTAL**: may be removed at any time
+pub struct BTreeOperationIter<'a, T: BTreeMapped<N>, const N: usize> {
+    i: usize,
+    j: usize,
+    snapshot: Option<&'a [T]>,
+    updates: &'a [(T::Index, Option<T>)],
+}
+
+impl<'a, T: BTreeMapped<N>, const N: usize> Iterator for BTreeOperationIter<'a, T, N> {
+    type Item = BTreeOperation<'a, T, N>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(snapshot) = &self.snapshot {
+            if self.j < snapshot.len() {
+                let t = &snapshot[self.j];
+                self.j += 1;
+                return Some(BTreeOperation::Insert(t));
+            }
+        }
+        if self.i < self.updates.len() {
+            let (i, t) = &self.updates[self.i];
+            self.i += 1;
+            Some(match t {
+                Some(t) => BTreeOperation::Insert(&t),
+                None => BTreeOperation::Remove(i),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: BTreeMapped<N>, const N: usize> BTreeUpdate<T, N> {
+    /// **EXPERIMENTAL**: may be removed at any time
+    pub fn iter_operations(&self) -> BTreeOperationIter<'_, T, N> {
+        BTreeOperationIter {
+            i: 0,
+            j: 0,
+            snapshot: self.snapshot.as_deref(),
+            updates: &self.updates,
+        }
+    }
+}
+
+/// **EXPERIMENTAL**: may be removed at any time
 #[derive(Debug, derive_more::Deref)]
 pub struct DerivedBTreeMap<T: BTreeMapped<N>, const N: usize, I, K, F, V>
 where
