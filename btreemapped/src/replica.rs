@@ -271,6 +271,46 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         BTreeSnapshot { seqid: replica.seqid, seqno: replica.seqno, snapshot }
     }
 
+    pub fn subscribe_with_snapshot(
+        &self,
+    ) -> (
+        Arc<BTreeUpdate<T, N>>,
+        impl Stream<Item = Result<Arc<BTreeUpdate<T, N>>, BTreeUpdateStreamError>>,
+    ) {
+        let mut updates = self.updates.subscribe();
+        let snap = self.snapshot();
+        let mut last_seqno = snap.seqno;
+        let snap_as_update = Arc::new(BTreeUpdate {
+            seqid: snap.seqid,
+            seqno: snap.seqno,
+            snapshot: Some(snap.snapshot),
+            updates: vec![],
+        });
+        let stream = try_stream! {
+            loop {
+                match updates.recv().await {
+                    Ok(up) => {
+                        if up.seqno <= last_seqno {
+                            continue;
+                        } else if up.seqno == last_seqno + 1 {
+                            last_seqno = up.seqno;
+                            yield up;
+                        } else {
+                            Err(BTreeUpdateStreamError::SeqnoSkip)?;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        Err(BTreeUpdateStreamError::Lagged)?;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        Err(BTreeUpdateStreamError::Closed)?;
+                    }
+                }
+            }
+        };
+        (snap_as_update, stream)
+    }
+
     /// Subscribe to a self-contained updates stream.  The first element is
     /// guaranteed to contain a snapshot, and subsequent updates guaranteed
     /// to be in strict seqno order.
