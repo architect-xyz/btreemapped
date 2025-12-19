@@ -35,6 +35,8 @@ pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     type Index: Into<Self::LIndex>
         + for<'a> TryFrom<&'a Self::LIndex>
         + Clone
+        + Eq
+        + Ord
         + serde::Serialize
         + serde::de::DeserializeOwned
         + Send

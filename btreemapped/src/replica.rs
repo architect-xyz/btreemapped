@@ -29,6 +29,27 @@ pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
     pub updates: Vec<(T::Index, Option<T>)>,
 }
 
+impl<T: BTreeMapped<N>, const N: usize> BTreeUpdate<T, N> {
+    /// Apply the update to a target BTreeMap.
+    pub fn apply_to(&self, target: &mut BTreeMap<T::Index, T>) {
+        if let Some(snapshot) = &self.snapshot {
+            for t in snapshot {
+                target.insert(t.index(), t.clone());
+            }
+        }
+        for (i, t) in &self.updates {
+            match t {
+                Some(t) => {
+                    target.insert(i.clone(), t.clone());
+                }
+                None => {
+                    target.remove(&i);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Error)]
 pub enum BTreeUpdateStreamError {
     #[error("seqno skipped")]
