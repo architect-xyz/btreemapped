@@ -29,21 +29,52 @@ pub struct BTreeUpdate<T: BTreeMapped<N>, const N: usize> {
     pub updates: Vec<(T::Index, Option<T>)>,
 }
 
-impl<T: BTreeMapped<N>, const N: usize> BTreeUpdate<T, N> {
-    /// Apply the update to a target BTreeMap.
-    pub fn apply_to(&self, target: &mut BTreeMap<T::Index, T>) {
-        if let Some(snapshot) = &self.snapshot {
+#[derive(Debug, derive_more::Deref)]
+pub struct DerivedBTreeMap<T: BTreeMapped<N>, const N: usize, I, K, F, V>
+where
+    I: Fn(&T::Index) -> K,
+    F: Fn(&T) -> V,
+    K: Ord,
+{
+    #[deref]
+    pub map: BTreeMap<K, V>,
+    pub map_index: I,
+    pub map_value: F,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: BTreeMapped<N>, const N: usize, I, K, F, V> DerivedBTreeMap<T, N, I, K, F, V>
+where
+    I: Fn(&T::Index) -> K,
+    F: Fn(&T) -> V,
+    K: Ord,
+{
+    pub fn new(map_index: I, map_value: F) -> Self {
+        Self {
+            map: BTreeMap::new(),
+            map_index,
+            map_value,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub fn apply_update(&mut self, update: &BTreeUpdate<T, N>) {
+        if let Some(snapshot) = &update.snapshot {
             for t in snapshot {
-                target.insert(t.index(), t.clone());
+                let k = (self.map_index)(&t.index());
+                let v = (self.map_value)(t);
+                self.map.insert(k, v);
             }
         }
-        for (i, t) in &self.updates {
+        for (i, t) in &update.updates {
+            let k = (self.map_index)(&i);
             match t {
                 Some(t) => {
-                    target.insert(i.clone(), t.clone());
+                    let v = (self.map_value)(t);
+                    self.map.insert(k, v);
                 }
                 None => {
-                    target.remove(&i);
+                    self.map.remove(&k);
                 }
             }
         }
