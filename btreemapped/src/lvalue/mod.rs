@@ -4,8 +4,9 @@
 //! to express the bounds on each tuple element respectively.  The user can
 //! iterate over the BTreeMap as usual and use `LValue<T>`s as comparators.
 
-use std::borrow::{Borrow, Cow};
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
+
+mod borrow_impls;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LValue<T> {
@@ -123,49 +124,6 @@ impl<T: Ord + Clone + 'static> RangeLookup for Option<T> {
     type Target = Option<T>;
 }
 
-// --- Borrow impls for zero-allocation BTreeMap lookups ---
-//
-// All BTreeMap keys are always LValue::Exact; Bottom/Top
-// are only used for range bound construction and never stored as keys.
-// This means the Borrow Ord-equivalence contract holds: for any two
-// stored keys a, b: a.cmp(&b) == a.borrow().cmp(b.borrow()).
-
-impl Borrow<str> for LIndex1<String> {
-    fn borrow(&self) -> &str {
-        self.0
-            .exact()
-            .expect("BTreeMap key must be LValue::Exact")
-    }
-}
-
-impl Borrow<str> for LIndex1<Cow<'static, str>> {
-    fn borrow(&self) -> &str {
-        self.0
-            .exact()
-            .expect("BTreeMap key must be LValue::Exact")
-    }
-}
-
-macro_rules! impl_borrow_identity_for_lindex1 {
-    ($($t:ty),*) => {
-        $(impl Borrow<$t> for LIndex1<$t> {
-            fn borrow(&self) -> &$t {
-                self.0.exact().expect("BTreeMap key must be LValue::Exact")
-            }
-        })*
-    };
-}
-
-impl_borrow_identity_for_lindex1!(i8, i16, i32, i64, u8, u16, u32, u64, bool);
-
-impl<T: Ord + Clone + 'static> Borrow<Option<T>> for LIndex1<Option<T>> {
-    fn borrow(&self) -> &Option<T> {
-        self.0
-            .exact()
-            .expect("BTreeMap key must be LValue::Exact")
-    }
-}
-
 // --- Lookup: flexible lookup trait for BTreeMapReplica::get ---
 //
 // For &str on singleton String/Cow indexes, uses Borrow<str> for
@@ -178,10 +136,7 @@ pub trait Lookup<L> {
 
 // Zero-alloc: &str on LIndex1<String> via Borrow<str>
 impl<'k> Lookup<LIndex1<String>> for &'k str {
-    fn lookup<'a, V>(
-        self,
-        map: &'a BTreeMap<LIndex1<String>, V>,
-    ) -> Option<&'a V> {
+    fn lookup<'a, V>(self, map: &'a BTreeMap<LIndex1<String>, V>) -> Option<&'a V> {
         map.get(self)
     }
 }
@@ -198,10 +153,7 @@ impl<'k> Lookup<LIndex1<Cow<'static, str>>> for &'k str {
 
 // Zero-alloc: pass a reference to an existing LIndex directly
 impl<'k, L: Ord> Lookup<L> for &'k L {
-    fn lookup<'a, V>(
-        self,
-        map: &'a BTreeMap<L, V>,
-    ) -> Option<&'a V> {
+    fn lookup<'a, V>(self, map: &'a BTreeMap<L, V>) -> Option<&'a V> {
         map.get(self)
     }
 }
