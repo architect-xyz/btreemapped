@@ -90,37 +90,37 @@ lindex!(LIndex3, N = 3, I0, I1, I2);
 lindex!(LIndex4, N = 4, I0, I1, I2, I3);
 lindex!(LIndex5, N = 5, I0, I1, I2, I3, I4);
 
-// --- LBorrowable: maps index types to their borrowed form ---
+// --- RangeLookup: maps index types to their borrowed form ---
 //
 // Resolves the ambiguity between Borrow<str> and Borrow<LIndex1<T>>
 // (from std's blanket) by telling for_range1 which Borrow target to
 // use.  String and Cow<str> borrow as str; primitives borrow as
 // themselves.
 
-pub trait LBorrowable: Ord + Clone + 'static {
-    type Borrowed: ?Sized + Ord;
+pub trait RangeLookup: Ord + Clone + 'static {
+    type Target: ?Sized + Ord;
 }
 
-impl LBorrowable for String {
-    type Borrowed = str;
+impl RangeLookup for String {
+    type Target = str;
 }
 
-impl LBorrowable for Cow<'static, str> {
-    type Borrowed = str;
+impl RangeLookup for Cow<'static, str> {
+    type Target = str;
 }
 
-macro_rules! impl_lborrowable_identity {
+macro_rules! impl_range_lookup_identity {
     ($($t:ty),*) => {
-        $(impl LBorrowable for $t {
-            type Borrowed = $t;
+        $(impl RangeLookup for $t {
+            type Target = $t;
         })*
     };
 }
 
-impl_lborrowable_identity!(i8, i16, i32, i64, u8, u16, u32, u64, bool);
+impl_range_lookup_identity!(i8, i16, i32, i64, u8, u16, u32, u64, bool);
 
-impl<T: Ord + Clone + 'static> LBorrowable for Option<T> {
-    type Borrowed = Option<T>;
+impl<T: Ord + Clone + 'static> RangeLookup for Option<T> {
+    type Target = Option<T>;
 }
 
 // --- Borrow impls for zero-allocation BTreeMap lookups ---

@@ -38,9 +38,9 @@ pub fn impl_for_range(input: TokenStream) -> TokenStream {
     let for_index_arity = lindex_args.len();
 
     if for_index_arity == 1 {
-        // Singleton: zero-alloc via Borrow<I0::Borrowed>.
+        // Singleton: zero-alloc via Borrow<I0::Target>.
         //
-        // LBorrowable maps each index type to its borrowed form
+        // RangeLookup maps each index type to its borrowed form
         // (String → str, i64 → i64, etc.), resolving the ambiguity
         // between our Borrow<str> and std's blanket Borrow<Self>.
         let i0 = &lindex_args[0];
@@ -48,23 +48,23 @@ pub fn impl_for_range(input: TokenStream) -> TokenStream {
             impl<T, #i0> BTreeMapReplica<T, 1>
             where
                 T: BTreeMapped<1, LIndex = LIndex1<#i0>>,
-                #i0: LBorrowable,
-                LIndex1<#i0>: std::borrow::Borrow<<#i0 as LBorrowable>::Borrowed>,
+                #i0: RangeLookup,
+                LIndex1<#i0>: std::borrow::Borrow<<#i0 as RangeLookup>::Target>,
             {
                 pub fn for_range1<Q, R, F>(&self, range: R, mut f: F)
                 where
-                    Q: std::borrow::Borrow<<#i0 as LBorrowable>::Borrowed>,
+                    Q: std::borrow::Borrow<<#i0 as RangeLookup>::Target>,
                     R: std::ops::RangeBounds<Q>,
                     F: FnMut(&T),
                 {
                     let start = range.start_bound().map(|x|
-                        <Q as std::borrow::Borrow<<#i0 as LBorrowable>::Borrowed>>::borrow(x)
+                        <Q as std::borrow::Borrow<<#i0 as RangeLookup>::Target>>::borrow(x)
                     );
                     let end = range.end_bound().map(|x|
-                        <Q as std::borrow::Borrow<<#i0 as LBorrowable>::Borrowed>>::borrow(x)
+                        <Q as std::borrow::Borrow<<#i0 as RangeLookup>::Target>>::borrow(x)
                     );
                     let replica = self.replica.read();
-                    for (_, t) in replica.range::<<#i0 as LBorrowable>::Borrowed, _>((start, end)) {
+                    for (_, t) in replica.range::<<#i0 as RangeLookup>::Target, _>((start, end)) {
                         f(t);
                     }
                 }
