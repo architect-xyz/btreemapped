@@ -346,22 +346,14 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok((replica.seqid, replica.seqno))
     }
 
-    pub fn contains_key<Q>(&self, i: Q) -> bool
-    where
-        Q: Into<T::LIndex>,
-    {
-        let i: T::LIndex = i.into();
+    pub fn contains_key<Q: GetKey<T::LIndex>>(&self, i: Q) -> bool {
         let replica = self.replica.read();
-        replica.contains_key(&i)
+        i.get_in_map(&replica).is_some()
     }
 
-    pub fn get<Q>(&self, i: Q) -> Option<MappedRwLockReadGuard<'_, T>>
-    where
-        Q: Into<T::LIndex>,
-    {
-        let i: T::LIndex = i.into();
+    pub fn get<Q: GetKey<T::LIndex>>(&self, i: Q) -> Option<MappedRwLockReadGuard<'_, T>> {
         let replica = self.replica.read();
-        match RwLockReadGuard::try_map(replica, |r| r.get(&i)) {
+        match RwLockReadGuard::try_map(replica, |r| i.get_in_map(r)) {
             Ok(t) => Some(t),
             Err(_) => None,
         }
@@ -422,9 +414,13 @@ mod tests {
             Some("2024-03-01T00:30:44Z".parse().unwrap()),
         ));
         replica.insert_for_test(Foo::new("ghi", None));
-        let foo = replica.get("def".to_string()).unwrap();
+        // Zero-alloc lookup via Borrow<str> — no .to_string() needed
+        let foo = replica.get("def").unwrap();
         assert_eq!(foo.key, "def");
         assert_eq!(foo.bar, Some("2024-03-01T00:30:44Z".parse().unwrap()));
+        // Tuple form also works
+        let foo2 = replica.get(("def",)).unwrap();
+        assert_eq!(foo2.key, "def");
         let mut io = vec![];
         replica.for_range1("abc".to_string()..="ghi".to_string(), |foo| {
             io.push(format!("{} {:?}", foo.key, foo.bar));
@@ -461,7 +457,8 @@ mod tests {
         replica.insert_for_test(Car::new("Bob", 888, "def"));
         replica.insert_for_test(Car::new("Charlie", 1002, "ghi"));
         replica.insert_for_test(Car::new("Charlie", 1003, "ghi"));
-        let elem = replica.get((Cow::Borrowed("Alice"), 123)).unwrap();
+        // &str auto-converts to Cow<'static, str> via Into in tuple impls
+        let elem = replica.get(("Alice", 123)).unwrap();
         assert_eq!(elem.key, "abc");
         let mut io = vec![];
         replica.for_range1(Cow::Borrowed("Alice")..=Cow::Borrowed("Bob"), |car| {
