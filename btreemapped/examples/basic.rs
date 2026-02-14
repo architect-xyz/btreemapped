@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
         let state = replica.read();
         eprintln!("{state:?}");
         // to trigger this println, insert a row into foobars with id 1337
-        if let Some(row_with_id_1337) = state.get(&(1337,).into()) {
+        if let Some(row_with_id_1337) = state.get(&LIndex1::from(1337)) {
             eprintln!("row with id 1337: {row_with_id_1337:?}");
         }
         interval.tick().await;

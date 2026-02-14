@@ -20,3 +20,8 @@ then, what does this do?
     pub funding_rate_cap_lower_pct: Option<Decimal>,
 
 should it be legal?
+
+
+I think the republishing aspect of BTreeMap (and having an independent sequence number, etc) is too much sauce.
+We should get rid of that and make it simpler.
+Most clients only care (a) when the initial sync is ready and (b) how far behind the replication is
