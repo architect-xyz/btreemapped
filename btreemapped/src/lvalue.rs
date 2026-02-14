@@ -4,6 +4,9 @@
 //! to express the bounds on each tuple element respectively.  The user can
 //! iterate over the BTreeMap as usual and use `LValue<T>`s as comparators.
 
+use std::borrow::{Borrow, Cow};
+use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LValue<T> {
     /// Less than any/all T (⊥)
@@ -102,7 +105,7 @@ impl LBorrowable for String {
     type Borrowed = str;
 }
 
-impl LBorrowable for std::borrow::Cow<'static, str> {
+impl LBorrowable for Cow<'static, str> {
     type Borrowed = str;
 }
 
@@ -127,7 +130,7 @@ impl<T: Ord + Clone + 'static> LBorrowable for Option<T> {
 // This means the Borrow Ord-equivalence contract holds: for any two
 // stored keys a, b: a.cmp(&b) == a.borrow().cmp(b.borrow()).
 
-impl std::borrow::Borrow<str> for LIndex1<String> {
+impl Borrow<str> for LIndex1<String> {
     fn borrow(&self) -> &str {
         self.0
             .exact()
@@ -135,7 +138,7 @@ impl std::borrow::Borrow<str> for LIndex1<String> {
     }
 }
 
-impl std::borrow::Borrow<str> for LIndex1<std::borrow::Cow<'static, str>> {
+impl Borrow<str> for LIndex1<Cow<'static, str>> {
     fn borrow(&self) -> &str {
         self.0
             .exact()
@@ -145,7 +148,7 @@ impl std::borrow::Borrow<str> for LIndex1<std::borrow::Cow<'static, str>> {
 
 macro_rules! impl_borrow_identity_for_lindex1 {
     ($($t:ty),*) => {
-        $(impl std::borrow::Borrow<$t> for LIndex1<$t> {
+        $(impl Borrow<$t> for LIndex1<$t> {
             fn borrow(&self) -> &$t {
                 self.0.exact().expect("BTreeMap key must be LValue::Exact")
             }
@@ -155,7 +158,7 @@ macro_rules! impl_borrow_identity_for_lindex1 {
 
 impl_borrow_identity_for_lindex1!(i8, i16, i32, i64, u8, u16, u32, u64, bool);
 
-impl<T: Ord + Clone + 'static> std::borrow::Borrow<Option<T>> for LIndex1<Option<T>> {
+impl<T: Ord + Clone + 'static> Borrow<Option<T>> for LIndex1<Option<T>> {
     fn borrow(&self) -> &Option<T> {
         self.0
             .exact()
@@ -170,24 +173,24 @@ impl<T: Ord + Clone + 'static> std::borrow::Borrow<Option<T>> for LIndex1<Option
 // Into (may allocate for &str → String).
 
 pub trait Lookup<L> {
-    fn get_in_map<'a, V>(self, map: &'a std::collections::BTreeMap<L, V>) -> Option<&'a V>;
+    fn lookup<'a, V>(self, map: &'a BTreeMap<L, V>) -> Option<&'a V>;
 }
 
 // Zero-alloc: &str on LIndex1<String> via Borrow<str>
 impl<'k> Lookup<LIndex1<String>> for &'k str {
-    fn get_in_map<'a, V>(
+    fn lookup<'a, V>(
         self,
-        map: &'a std::collections::BTreeMap<LIndex1<String>, V>,
+        map: &'a BTreeMap<LIndex1<String>, V>,
     ) -> Option<&'a V> {
         map.get(self)
     }
 }
 
 // Zero-alloc: &str on LIndex1<Cow<'static, str>> via Borrow<str>
-impl<'k> Lookup<LIndex1<std::borrow::Cow<'static, str>>> for &'k str {
-    fn get_in_map<'a, V>(
+impl<'k> Lookup<LIndex1<Cow<'static, str>>> for &'k str {
+    fn lookup<'a, V>(
         self,
-        map: &'a std::collections::BTreeMap<LIndex1<std::borrow::Cow<'static, str>>, V>,
+        map: &'a BTreeMap<LIndex1<Cow<'static, str>>, V>,
     ) -> Option<&'a V> {
         map.get(self)
     }
@@ -195,9 +198,9 @@ impl<'k> Lookup<LIndex1<std::borrow::Cow<'static, str>>> for &'k str {
 
 // Zero-alloc: pass a reference to an existing LIndex directly
 impl<'k, L: Ord> Lookup<L> for &'k L {
-    fn get_in_map<'a, V>(
+    fn lookup<'a, V>(
         self,
-        map: &'a std::collections::BTreeMap<L, V>,
+        map: &'a BTreeMap<L, V>,
     ) -> Option<&'a V> {
         map.get(self)
     }
@@ -208,9 +211,9 @@ macro_rules! impl_singleton_getkey {
     ($($t:ty),*) => {
         $(
             impl Lookup<LIndex1<$t>> for $t {
-                fn get_in_map<'a, V>(
+                fn lookup<'a, V>(
                     self,
-                    map: &'a std::collections::BTreeMap<LIndex1<$t>, V>,
+                    map: &'a BTreeMap<LIndex1<$t>, V>,
                 ) -> Option<&'a V> {
                     map.get(&LIndex1(LValue::Exact(self)))
                 }
@@ -221,10 +224,10 @@ macro_rules! impl_singleton_getkey {
 
 impl_singleton_getkey!(String, i8, i16, i32, i64, u8, u16, u32, u64, bool);
 
-impl Lookup<LIndex1<std::borrow::Cow<'static, str>>> for std::borrow::Cow<'static, str> {
-    fn get_in_map<'a, V>(
+impl Lookup<LIndex1<Cow<'static, str>>> for Cow<'static, str> {
+    fn lookup<'a, V>(
         self,
-        map: &'a std::collections::BTreeMap<LIndex1<std::borrow::Cow<'static, str>>, V>,
+        map: &'a BTreeMap<LIndex1<Cow<'static, str>>, V>,
     ) -> Option<&'a V> {
         map.get(&LIndex1(LValue::Exact(self)))
     }
@@ -238,9 +241,9 @@ macro_rules! impl_tuple_getkey {
             where
                 $($Q: Into<$I>, $I: Ord,)+
             {
-                fn get_in_map<'a, V>(
+                fn lookup<'a, V>(
                     self,
-                    map: &'a std::collections::BTreeMap<$name<$($I),+>, V>,
+                    map: &'a BTreeMap<$name<$($I),+>, V>,
                 ) -> Option<&'a V> {
                     let ($([<$Q:lower>],)+) = self;
                     let key = $name($(LValue::Exact([<$Q:lower>].into()),)+);
