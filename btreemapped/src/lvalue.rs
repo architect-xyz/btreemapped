@@ -207,7 +207,7 @@ impl<'k, L: Ord> Lookup<L> for &'k L {
 }
 
 // Singleton impls for common key types (no string allocation)
-macro_rules! impl_singleton_getkey {
+macro_rules! impl_singleton_lookup {
     ($($t:ty),*) => {
         $(
             impl Lookup<LIndex1<$t>> for $t {
@@ -222,7 +222,7 @@ macro_rules! impl_singleton_getkey {
     };
 }
 
-impl_singleton_getkey!(String, i8, i16, i32, i64, u8, u16, u32, u64, bool);
+impl_singleton_lookup!(String, i8, i16, i32, i64, u8, u16, u32, u64, bool);
 
 impl Lookup<LIndex1<Cow<'static, str>>> for Cow<'static, str> {
     fn lookup<'a, V>(
@@ -234,7 +234,7 @@ impl Lookup<LIndex1<Cow<'static, str>>> for Cow<'static, str> {
 }
 
 // Tuple impls for all arities (each element converts via Into)
-macro_rules! impl_tuple_getkey {
+macro_rules! impl_tuple_lookup {
     ($name:ident, $($Q:ident => $I:ident),+) => {
         paste::paste! {
             impl<$($Q, $I),+> Lookup<$name<$($I),+>> for ($($Q,)+)
@@ -254,8 +254,8 @@ macro_rules! impl_tuple_getkey {
     };
 }
 
-impl_tuple_getkey!(LIndex1, Q0 => I0);
-impl_tuple_getkey!(LIndex2, Q0 => I0, Q1 => I1);
-impl_tuple_getkey!(LIndex3, Q0 => I0, Q1 => I1, Q2 => I2);
-impl_tuple_getkey!(LIndex4, Q0 => I0, Q1 => I1, Q2 => I2, Q3 => I3);
-impl_tuple_getkey!(LIndex5, Q0 => I0, Q1 => I1, Q2 => I2, Q3 => I3, Q4 => I4);
+impl_tuple_lookup!(LIndex1, Q0 => I0);
+impl_tuple_lookup!(LIndex2, Q0 => I0, Q1 => I1);
+impl_tuple_lookup!(LIndex3, Q0 => I0, Q1 => I1, Q2 => I2);
+impl_tuple_lookup!(LIndex4, Q0 => I0, Q1 => I1, Q2 => I2, Q3 => I3);
+impl_tuple_lookup!(LIndex5, Q0 => I0, Q1 => I1, Q2 => I2, Q3 => I3, Q4 => I4);
