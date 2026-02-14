@@ -63,7 +63,6 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     let mut lindex_field_types = vec![]; // same as index_field_types, except String => str
     let mut unindexed_fields = vec![];
     let mut unindexed_field_idents = vec![];
-    let mut unindexed_field_types = vec![]; // just the types in order, for convenience
     let mut all_fields = vec![]; // all fields, for convenience
     let mut field_try_from: HashMap<Ident, Type> = HashMap::new();
     let mut field_try_from_json: HashSet<Ident> = HashSet::new();
@@ -93,7 +92,6 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             index_fields_by_name.insert(name.to_string(), (name, ty));
         } else {
             unindexed_field_idents.push(name.clone());
-            unindexed_field_types.push(ty.clone());
             unindexed_fields.push((name, ty));
         }
     }
@@ -130,17 +128,6 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
     } else {
         quote! { (#(#index_field_types),*) }
     };
-
-    // Generate struct fields for kv_as_ref
-    let mut kv_ref_fields = vec![];
-    for (i, (name, _)) in index_fields.iter().enumerate() {
-        let idx = syn::Index::from(i);
-        kv_ref_fields.push(quote! { #name: index .#idx.exact()? });
-    }
-    for (i, (name, _)) in unindexed_fields.iter().enumerate() {
-        let idx = syn::Index::from(i);
-        kv_ref_fields.push(quote! { #name: &unindexed.#idx });
-    }
 
     // Generate statements for parse_row
     let mut parse_row_index_var_decls = vec![];
@@ -390,18 +377,6 @@ fn is_option_type(ty: &Type) -> bool {
         Type::Path(type_path) => {
             let segment = type_path.path.segments.last().unwrap();
             segment.ident == "Option"
-        }
-        _ => false,
-    }
-}
-
-// CR alee: pretty sure this is unsound, let's see if it ends up being
-// "good enough" for awhile
-fn _is_string_type(ty: &Type) -> bool {
-    match ty {
-        Type::Path(type_path) => {
-            let segment = type_path.path.segments.last().unwrap();
-            segment.ident == "String"
         }
         _ => false,
     }

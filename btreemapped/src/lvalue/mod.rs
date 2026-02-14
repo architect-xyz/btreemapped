@@ -46,7 +46,7 @@ pub trait HasArity<const N: usize> {}
 macro_rules! lindex {
     ($name:ident, N = $n:literal, $($I:ident),+) => {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name<$($I),+>($(pub LValue<$I>,)+);
+        pub struct $name<$($I),+>($(pub(crate) LValue<$I>,)+);
 
         paste::paste! {
             impl<$($I),+> HasArity<$n> for $name<$($I),+> {}
