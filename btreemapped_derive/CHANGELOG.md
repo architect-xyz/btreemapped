@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.0](https://github.com/architect-xyz/btreemapped/compare/v0.2.0...v0.3.0) (2026-02-14)
+## [0.4.0](https://github.com/architect-xyz/btreemapped/compare/v0.2.0...v0.4.0) (2026-02-14)
 
 
 ### ⚠ BREAKING CHANGES
