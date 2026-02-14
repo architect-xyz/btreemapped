@@ -390,8 +390,6 @@ mod tests {
     use super::*;
     use btreemapped_derive::BTreeMapped;
     use chrono::{DateTime, Utc};
-    use std::borrow::Cow;
-
     #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["key"])]
     struct Foo {
@@ -422,7 +420,7 @@ mod tests {
         let foo2 = replica.get(("def",)).unwrap();
         assert_eq!(foo2.key, "def");
         let mut io = vec![];
-        replica.for_range1("abc".to_string()..="ghi".to_string(), |foo| {
+        replica.for_range1("abc"..="ghi", |foo| {
             io.push(format!("{} {:?}", foo.key, foo.bar));
         });
         assert_eq!(io, vec!["abc None", "def Some(2024-03-01T00:30:44Z)", "ghi None"]);
@@ -431,8 +429,7 @@ mod tests {
     #[derive(Debug, Clone, BTreeMapped)]
     #[btreemap(index = ["owner", "license_plate"])]
     struct Car {
-        #[try_from(String)]
-        owner: Cow<'static, str>,
+        owner: String,
         license_plate: i64,
         key: String,
     }
@@ -440,7 +437,7 @@ mod tests {
     impl Car {
         fn new(owner: &str, license_plate: i64, key: &str) -> Self {
             Self {
-                owner: Cow::Owned(owner.to_string()),
+                owner: owner.to_string(),
                 license_plate,
                 key: key.to_string(),
             }
@@ -457,26 +454,26 @@ mod tests {
         replica.insert_for_test(Car::new("Bob", 888, "def"));
         replica.insert_for_test(Car::new("Charlie", 1002, "ghi"));
         replica.insert_for_test(Car::new("Charlie", 1003, "ghi"));
-        // &str auto-converts to Cow<'static, str> via Into in tuple impls
+        // &str auto-converts to String via Into
         let elem = replica.get(("Alice", 123)).unwrap();
         assert_eq!(elem.key, "abc");
         let mut io = vec![];
-        replica.for_range1(Cow::Borrowed("Alice")..=Cow::Borrowed("Bob"), |car| {
+        replica.for_range1("Alice"..="Bob", |car| {
             io.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
         assert_eq!(io, vec!["Alice 123 abc", "Bob 456 def", "Bob 888 def"]);
         let mut io2 = vec![];
-        replica.for_range2(Cow::Borrowed("Alice"), 1000..=1002, |car| {
+        replica.for_range2("Alice", 1000..=1002, |car| {
             io2.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
         assert_eq!(io2, Vec::<String>::new());
         let mut io3 = vec![];
-        replica.for_range2(Cow::Borrowed("Bob"), 456..=1003, |car| {
+        replica.for_range2("Bob", 456..=1003, |car| {
             io3.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
         assert_eq!(io3, vec!["Bob 456 def", "Bob 888 def"]);
         let mut io4 = vec![];
-        replica.for_range2(Cow::Borrowed("Charlie"), 1000..1003, |car| {
+        replica.for_range2("Charlie", 1000..1003, |car| {
             io4.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
         assert_eq!(io4, vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]);

@@ -87,6 +87,39 @@ lindex!(LIndex3, N = 3, I0, I1, I2);
 lindex!(LIndex4, N = 4, I0, I1, I2, I3);
 lindex!(LIndex5, N = 5, I0, I1, I2, I3, I4);
 
+// --- LBorrowable: maps index types to their borrowed form ---
+//
+// Resolves the ambiguity between Borrow<str> and Borrow<LIndex1<T>>
+// (from std's blanket) by telling for_range1 which Borrow target to
+// use.  String and Cow<str> borrow as str; primitives borrow as
+// themselves.
+
+pub trait LBorrowable: Ord + Clone + 'static {
+    type Borrowed: ?Sized + Ord;
+}
+
+impl LBorrowable for String {
+    type Borrowed = str;
+}
+
+impl LBorrowable for std::borrow::Cow<'static, str> {
+    type Borrowed = str;
+}
+
+macro_rules! impl_lborrowable_identity {
+    ($($t:ty),*) => {
+        $(impl LBorrowable for $t {
+            type Borrowed = $t;
+        })*
+    };
+}
+
+impl_lborrowable_identity!(i8, i16, i32, i64, u8, u16, u32, u64, bool);
+
+impl<T: Ord + Clone + 'static> LBorrowable for Option<T> {
+    type Borrowed = Option<T>;
+}
+
 // --- Borrow impls for zero-allocation BTreeMap lookups ---
 //
 // All BTreeMap keys are always LValue::Exact; NegInfinity/Infinity
@@ -104,6 +137,26 @@ impl std::borrow::Borrow<str> for LIndex1<String> {
 
 impl std::borrow::Borrow<str> for LIndex1<std::borrow::Cow<'static, str>> {
     fn borrow(&self) -> &str {
+        self.0
+            .exact()
+            .expect("BTreeMap key must be LValue::Exact")
+    }
+}
+
+macro_rules! impl_borrow_identity_for_lindex1 {
+    ($($t:ty),*) => {
+        $(impl std::borrow::Borrow<$t> for LIndex1<$t> {
+            fn borrow(&self) -> &$t {
+                self.0.exact().expect("BTreeMap key must be LValue::Exact")
+            }
+        })*
+    };
+}
+
+impl_borrow_identity_for_lindex1!(i8, i16, i32, i64, u8, u16, u32, u64, bool);
+
+impl<T: Ord + Clone + 'static> std::borrow::Borrow<Option<T>> for LIndex1<Option<T>> {
+    fn borrow(&self) -> &Option<T> {
         self.0
             .exact()
             .expect("BTreeMap key must be LValue::Exact")

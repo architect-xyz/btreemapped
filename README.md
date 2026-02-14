@@ -25,8 +25,7 @@ struct User {
 #[derive(Debug, Clone, BTreeMapped)]
 #[btreemap(index = ["owner", "license_plate"])]
 struct Car {
-    #[try_from(String)]
-    owner: Cow<'static, str>,
+    owner: String,
     license_plate: i64,
     color: String,
 }
@@ -57,17 +56,15 @@ replica.for_range1(100..=200, |user| {
     println!("{}: {:?}", user.id, user.name);
 });
 
-// All cars owned by "Bob"
-car_replica.for_range1(
-    Cow::Borrowed("Bob")..=Cow::Borrowed("Bob"),
-    |car| println!("{} {}", car.owner, car.license_plate),
-);
+// All cars owned by "Bob" — &str auto-converts, zero-alloc
+car_replica.for_range1("Bob"..="Bob", |car| {
+    println!("{} {}", car.owner, car.license_plate);
+});
 
 // Charlie's cars with license_plate in 1000..1003
-car_replica.for_range2(
-    Cow::Borrowed("Charlie"), 1000..1003,
-    |car| println!("{} {}", car.owner, car.license_plate),
-);
+car_replica.for_range2("Charlie", 1000..1003, |car| {
+    println!("{} {}", car.owner, car.license_plate);
+});
 // prints: Charlie 1000, Charlie 1001, Charlie 1002
 ```
 
