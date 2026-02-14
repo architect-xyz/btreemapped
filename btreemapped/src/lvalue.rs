@@ -6,12 +6,12 @@
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LValue<T> {
-    /// Less than any/all T
-    NegInfinity,
+    /// Less than any/all T (⊥)
+    Bottom,
     /// Exactly T
     Exact(T),
-    /// Greater than any/all T
-    Infinity,
+    /// Greater than any/all T (⊤)
+    Top,
 }
 
 impl<T> LValue<T> {
@@ -26,9 +26,9 @@ impl<T> LValue<T> {
 impl<'a, T: std::fmt::Display> std::fmt::Display for LValue<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LValue::NegInfinity => write!(f, "-∞"),
+            LValue::Bottom => write!(f, "⊥"),
             LValue::Exact(t) => t.fmt(f),
-            LValue::Infinity => write!(f, "∞"),
+            LValue::Top => write!(f, "⊤"),
         }
     }
 }
@@ -122,7 +122,7 @@ impl<T: Ord + Clone + 'static> LBorrowable for Option<T> {
 
 // --- Borrow impls for zero-allocation BTreeMap lookups ---
 //
-// All BTreeMap keys are always LValue::Exact; NegInfinity/Infinity
+// All BTreeMap keys are always LValue::Exact; Bottom/Top
 // are only used for range bound construction and never stored as keys.
 // This means the Borrow Ord-equivalence contract holds: for any two
 // stored keys a, b: a.cmp(&b) == a.borrow().cmp(b.borrow()).
@@ -163,18 +163,18 @@ impl<T: Ord + Clone + 'static> std::borrow::Borrow<Option<T>> for LIndex1<Option
     }
 }
 
-// --- GetKey: flexible lookup trait for BTreeMapReplica::get ---
+// --- Lookup: flexible lookup trait for BTreeMapReplica::get ---
 //
 // For &str on singleton String/Cow indexes, uses Borrow<str> for
 // zero-allocation lookups. For tuples, converts each element via
 // Into (may allocate for &str → String).
 
-pub trait GetKey<L> {
+pub trait Lookup<L> {
     fn get_in_map<'a, V>(self, map: &'a std::collections::BTreeMap<L, V>) -> Option<&'a V>;
 }
 
 // Zero-alloc: &str on LIndex1<String> via Borrow<str>
-impl<'k> GetKey<LIndex1<String>> for &'k str {
+impl<'k> Lookup<LIndex1<String>> for &'k str {
     fn get_in_map<'a, V>(
         self,
         map: &'a std::collections::BTreeMap<LIndex1<String>, V>,
@@ -184,7 +184,7 @@ impl<'k> GetKey<LIndex1<String>> for &'k str {
 }
 
 // Zero-alloc: &str on LIndex1<Cow<'static, str>> via Borrow<str>
-impl<'k> GetKey<LIndex1<std::borrow::Cow<'static, str>>> for &'k str {
+impl<'k> Lookup<LIndex1<std::borrow::Cow<'static, str>>> for &'k str {
     fn get_in_map<'a, V>(
         self,
         map: &'a std::collections::BTreeMap<LIndex1<std::borrow::Cow<'static, str>>, V>,
@@ -194,7 +194,7 @@ impl<'k> GetKey<LIndex1<std::borrow::Cow<'static, str>>> for &'k str {
 }
 
 // Zero-alloc: pass a reference to an existing LIndex directly
-impl<'k, L: Ord> GetKey<L> for &'k L {
+impl<'k, L: Ord> Lookup<L> for &'k L {
     fn get_in_map<'a, V>(
         self,
         map: &'a std::collections::BTreeMap<L, V>,
@@ -207,7 +207,7 @@ impl<'k, L: Ord> GetKey<L> for &'k L {
 macro_rules! impl_singleton_getkey {
     ($($t:ty),*) => {
         $(
-            impl GetKey<LIndex1<$t>> for $t {
+            impl Lookup<LIndex1<$t>> for $t {
                 fn get_in_map<'a, V>(
                     self,
                     map: &'a std::collections::BTreeMap<LIndex1<$t>, V>,
@@ -221,7 +221,7 @@ macro_rules! impl_singleton_getkey {
 
 impl_singleton_getkey!(String, i8, i16, i32, i64, u8, u16, u32, u64, bool);
 
-impl GetKey<LIndex1<std::borrow::Cow<'static, str>>> for std::borrow::Cow<'static, str> {
+impl Lookup<LIndex1<std::borrow::Cow<'static, str>>> for std::borrow::Cow<'static, str> {
     fn get_in_map<'a, V>(
         self,
         map: &'a std::collections::BTreeMap<LIndex1<std::borrow::Cow<'static, str>>, V>,
@@ -234,7 +234,7 @@ impl GetKey<LIndex1<std::borrow::Cow<'static, str>>> for std::borrow::Cow<'stati
 macro_rules! impl_tuple_getkey {
     ($name:ident, $($Q:ident => $I:ident),+) => {
         paste::paste! {
-            impl<$($Q, $I),+> GetKey<$name<$($I),+>> for ($($Q,)+)
+            impl<$($Q, $I),+> Lookup<$name<$($I),+>> for ($($Q,)+)
             where
                 $($Q: Into<$I>, $I: Ord,)+
             {

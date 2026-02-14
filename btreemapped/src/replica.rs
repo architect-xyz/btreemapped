@@ -346,12 +346,12 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         Ok((replica.seqid, replica.seqno))
     }
 
-    pub fn contains_key<Q: GetKey<T::LIndex>>(&self, i: Q) -> bool {
+    pub fn contains_key<Q: Lookup<T::LIndex>>(&self, i: Q) -> bool {
         let replica = self.replica.read();
         i.get_in_map(&replica).is_some()
     }
 
-    pub fn get<Q: GetKey<T::LIndex>>(&self, i: Q) -> Option<MappedRwLockReadGuard<'_, T>> {
+    pub fn get<Q: Lookup<T::LIndex>>(&self, i: Q) -> Option<MappedRwLockReadGuard<'_, T>> {
         let replica = self.replica.read();
         match RwLockReadGuard::try_map(replica, |r| i.get_in_map(r)) {
             Ok(t) => Some(t),

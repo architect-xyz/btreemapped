@@ -136,9 +136,9 @@ pub fn impl_for_range(input: TokenStream) -> TokenStream {
                     start_bound_bind.push(tt.clone());
                     end_bound_bind.push(tt);
                 } else {
-                    // Open dimension: NegInfinity for start, Infinity for end
-                    start_bound_bind.push(quote! { LValue::NegInfinity });
-                    end_bound_bind.push(quote! { LValue::Infinity });
+                    // Open dimension: Bottom for start, Top for end
+                    start_bound_bind.push(quote! { LValue::Bottom });
+                    end_bound_bind.push(quote! { LValue::Top });
                 }
             }
 
