@@ -1,7 +1,10 @@
 use anyhow::Result;
-use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema};
-use btreemapped::config::{
-    BatchConfig, PgConnectionConfig, PipelineConfig, TcpKeepaliveConfig, TlsConfig,
+use btreemapped::{
+    config::{
+        BatchConfig, PgConnectionConfig, PipelineConfig, TcpKeepaliveConfig, TlsConfig,
+    },
+    replicator::BTreeMapReplicator,
+    BTreeMapped, LIndex1, PgSchema,
 };
 use postgres_types::Type;
 use serde::Serialize;

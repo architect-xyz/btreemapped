@@ -1,7 +1,10 @@
 use anyhow::Result;
-use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1};
-use btreemapped::config::{
-    BatchConfig, PgConnectionConfig, PipelineConfig, TcpKeepaliveConfig, TlsConfig,
+use btreemapped::{
+    config::{
+        BatchConfig, PgConnectionConfig, PipelineConfig, TcpKeepaliveConfig, TlsConfig,
+    },
+    replicator::BTreeMapReplicator,
+    BTreeMapped, LIndex1,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
