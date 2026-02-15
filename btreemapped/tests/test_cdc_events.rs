@@ -1,6 +1,8 @@
 use anyhow::Result;
 use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1};
-use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
+use etl::config::{
+    BatchConfig, PgConnectionConfig, PipelineConfig, TcpKeepaliveConfig, TlsConfig,
+};
 use tokio_util::sync::CancellationToken;
 use utils::{create_postgres_client, setup_postgres_container};
 
@@ -47,7 +49,7 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
                 trusted_root_certs: "".to_string(),
                 enabled: false,
             },
-            keepalive: None,
+            keepalive: TcpKeepaliveConfig::default(),
         },
         batch: BatchConfig {
             max_size: 100,
@@ -56,7 +58,9 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
-        slot_prefix: "test_cdc_events".to_string(),
+        max_copy_connections_per_table: 1,
+        table_sync_copy: Default::default(),
+        invalidated_slot_behavior: Default::default(),
     }
 }
 

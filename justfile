@@ -1,9 +1,5 @@
 nightly := "nightly-2025-12-07"
 
-# List available recipes
-default:
-    @just --list
-
 # Run tests with coverage (lcov output)
 coverage:
     cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
@@ -11,6 +7,10 @@ coverage:
 # Run tests with coverage and open HTML report
 coverage-html:
     cargo llvm-cov --all-features --workspace --html --open
+
+# List available recipes
+default:
+    @just --list
 
 # Restart postgres and run the basic example
 example:
@@ -30,3 +30,7 @@ format:
 # Run clippy lints
 lint:
     cargo clippy --all-features --workspace -- -D warnings
+
+# Run tests like CI (all features, all workspace crates)
+test:
+    cargo test --all-features --workspace

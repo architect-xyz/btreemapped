@@ -9,8 +9,8 @@ bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 derive_more = { version = "1", features = ["try_into"] }
 env_logger = "0.11"
-etl = { git = "https://github.com/architect-xyz/etl.git", rev = "978af896f9d99c5ba525614e17aca9046f1d506f", default-features = false }
-etl-postgres = { git = "https://github.com/architect-xyz/etl.git", rev = "978af896f9d99c5ba525614e17aca9046f1d506f", default-features = false, features = [
+etl = { git = "https://github.com/supabase/etl.git", rev = "7f3f240442c18d228c97f861fa4352232dc6eec4", default-features = false }
+etl-postgres = { git = "https://github.com/supabase/etl.git", rev = "7f3f240442c18d228c97f861fa4352232dc6eec4", default-features = false, features = [
   "replication",
 ] }
 futures = "0.3"

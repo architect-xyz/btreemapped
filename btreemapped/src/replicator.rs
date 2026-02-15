@@ -15,7 +15,10 @@ use etl::{
 use etl_postgres::types::{TableId, TableSchema};
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use tokio::sync::{futures::OwnedNotified, Notify};
 use tokio_util::sync::CancellationToken;
 
@@ -151,10 +154,10 @@ impl StateStore for BTreeMapReplicator {
 
     async fn get_table_replication_states(
         &self,
-    ) -> EtlResult<HashMap<TableId, TableReplicationPhase>> {
+    ) -> EtlResult<BTreeMap<TableId, TableReplicationPhase>> {
         let inner = self.inner.lock();
 
-        Ok(inner.table_replication_states.clone())
+        Ok(inner.table_replication_states.iter().map(|(&k, v)| (k, v.clone())).collect())
     }
 
     async fn load_table_replication_states(&self) -> EtlResult<usize> {
@@ -163,25 +166,26 @@ impl StateStore for BTreeMapReplicator {
         Ok(inner.table_replication_states.len())
     }
 
-    async fn update_table_replication_state(
+    async fn update_table_replication_states(
         &self,
-        table_id: TableId,
-        state: TableReplicationPhase,
+        updates: Vec<(TableId, TableReplicationPhase)>,
     ) -> EtlResult<()> {
         let mut inner = self.inner.lock();
 
-        // Store the current state in history before updating
-        if let Some(current_state) =
-            inner.table_replication_states.get(&table_id).cloned()
-        {
-            inner
-                .table_state_history
-                .entry(table_id)
-                .or_default()
-                .push(current_state);
-        }
+        for (table_id, state) in updates {
+            // Store the current state in history before updating
+            if let Some(current_state) =
+                inner.table_replication_states.get(&table_id).cloned()
+            {
+                inner
+                    .table_state_history
+                    .entry(table_id)
+                    .or_default()
+                    .push(current_state);
+            }
 
-        inner.table_replication_states.insert(table_id, state);
+            inner.table_replication_states.insert(table_id, state);
+        }
 
         if !inner.fully_synced
             && inner
