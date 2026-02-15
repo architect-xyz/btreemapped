@@ -2,11 +2,9 @@
 
 use anyhow::Result;
 use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema};
-use btreemapped_derive::{BTreeMapped, PgSchema};
 use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
 use rust_decimal::Decimal;
-use rust_decimal_macros::dec;
 use utils::{create_postgres_client, setup_postgres_container};
 
 mod utils;
@@ -49,18 +47,14 @@ async fn setup_database(host: &str, port: u16) -> Result<()> {
 async fn insert_test_data(host: &str, port: u16) -> Result<()> {
     let client = create_postgres_client(host, port).await?;
 
-    // Insert test data
+    // Insert test data using simple query protocol to avoid postgres_types
+    // version mismatch (rust_decimal implements ToSql for crates.io
+    // postgres-types, but our tokio-postgres uses the MaterializeInc fork).
     client
-        .execute(
-            "INSERT INTO test_records (id, name, value, price) VALUES ($1, $2, $3, $4)",
-            &[&1i64, &"Alice", &100i32, &dec!(123.45)],
-        )
-        .await?;
-
-    client
-        .execute(
-            "INSERT INTO test_records (id, name, value, price) VALUES ($1, $2, $3, $4)",
-            &[&2i64, &"Bob", &200i32, &dec!(678.90)],
+        .batch_execute(
+            "INSERT INTO test_records (id, name, value, price) VALUES
+                (1, 'Alice', 100, 123.45),
+                (2, 'Bob', 200, 678.90)",
         )
         .await?;
 
