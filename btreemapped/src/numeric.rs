@@ -338,94 +338,121 @@ pub(crate) fn numeric_to_decimal(
 //     }
 // }
 
-// #[cfg(all(test, feature = "rust_decimal"))]
-// mod tests {
-//     use super::*;
-//     use rust_decimal_macros::dec;
-//     use std::convert::TryFrom;
+#[cfg(all(test, feature = "rust_decimal"))]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
 
-//     #[test]
-//     fn test_simple_integer_conversion() {
-//         let d = dec!(123);
-//         let pg = PgNumeric::try_from(d).unwrap();
-//         let back = rust_decimal::Decimal::try_from(pg).unwrap();
-//         assert_eq!(d, back);
-//     }
+    #[test]
+    fn test_nan_conversion_fails() {
+        let pg = etl::types::PgNumeric::NaN;
+        let result = numeric_to_decimal(&pg);
+        assert!(matches!(result, Err(PgNumericConversionError::NaN)));
+    }
 
-//     #[test]
-//     fn test_negative_integer() {
-//         let d = dec!(-456);
-//         let pg = PgNumeric::try_from(d).unwrap();
-//         let back = rust_decimal::Decimal::try_from(pg).unwrap();
-//         assert_eq!(d, back);
-//     }
+    #[test]
+    fn test_positive_infinity_conversion_fails() {
+        let pg = etl::types::PgNumeric::PositiveInfinity;
+        let result = numeric_to_decimal(&pg);
+        assert!(matches!(
+            result,
+            Err(PgNumericConversionError::PositiveInfinity)
+        ));
+    }
 
-//     #[test]
-//     fn test_decimal_with_scale() {
-//         let d = dec!(123.45);
-//         let pg = PgNumeric::try_from(d).unwrap();
-//         let back = rust_decimal::Decimal::try_from(pg).unwrap();
-//         assert_eq!(d, back);
-//     }
+    #[test]
+    fn test_negative_infinity_conversion_fails() {
+        let pg = etl::types::PgNumeric::NegativeInfinity;
+        let result = numeric_to_decimal(&pg);
+        assert!(matches!(
+            result,
+            Err(PgNumericConversionError::NegativeInfinity)
+        ));
+    }
 
-//     #[test]
-//     fn test_small_decimal() {
-//         let d = dec!(0.0001);
-//         let pg = PgNumeric::try_from(d).unwrap();
-//         let back = rust_decimal::Decimal::try_from(pg).unwrap();
-//         assert_eq!(d, back);
-//     }
+    #[test]
+    fn test_zero_empty_digits() {
+        // Postgres represents 0 as an empty digit array
+        let pg = etl::types::PgNumeric::Value {
+            sign: etl::types::Sign::Positive,
+            weight: 0,
+            scale: 0,
+            digits: vec![],
+        };
+        let result = numeric_to_decimal(&pg).unwrap();
+        assert_eq!(result, dec!(0));
+    }
 
-//     #[test]
-//     fn test_large_number() {
-//         let d = dec!(999999999999.999999);
-//         let pg = PgNumeric::try_from(d).unwrap();
-//         let back = rust_decimal::Decimal::try_from(pg).unwrap();
-//         assert_eq!(d, back);
-//     }
+    #[test]
+    fn test_simple_integer() {
+        // 42 in base-10000: digit=42, weight=0, scale=0
+        let pg = etl::types::PgNumeric::Value {
+            sign: etl::types::Sign::Positive,
+            weight: 0,
+            scale: 0,
+            digits: vec![42],
+        };
+        let result = numeric_to_decimal(&pg).unwrap();
+        assert_eq!(result, dec!(42));
+    }
 
-//     #[test]
-//     fn test_zero() {
-//         let d = dec!(0);
-//         let pg = PgNumeric::try_from(d).unwrap();
-//         let back = rust_decimal::Decimal::try_from(pg).unwrap();
-//         assert_eq!(d, back);
-//     }
+    #[test]
+    fn test_negative_integer() {
+        let pg = etl::types::PgNumeric::Value {
+            sign: etl::types::Sign::Negative,
+            weight: 0,
+            scale: 0,
+            digits: vec![42],
+        };
+        let result = numeric_to_decimal(&pg).unwrap();
+        assert_eq!(result, dec!(-42));
+    }
 
-//     #[test]
-//     fn test_negative_decimal() {
-//         let d = dec!(-0.123456);
-//         let pg = PgNumeric::try_from(d).unwrap();
-//         let back = rust_decimal::Decimal::try_from(pg).unwrap();
-//         assert_eq!(d, back);
-//     }
+    #[test]
+    fn test_decimal_with_scale() {
+        // 123.45 in base-10000: digits=[123, 4500], weight=0, scale=2
+        let pg = etl::types::PgNumeric::Value {
+            sign: etl::types::Sign::Positive,
+            weight: 0,
+            scale: 2,
+            digits: vec![123, 4500],
+        };
+        let result = numeric_to_decimal(&pg).unwrap();
+        assert_eq!(result, dec!(123.45));
+    }
 
-//     #[test]
-//     fn test_nan_conversion_fails() {
-//         let pg = etl::types::PgNumeric::NaN;
-//         let result = numeric_to_decimal(&pg);
-//         assert!(result.is_err());
-//     }
+    #[test]
+    fn test_large_number() {
+        // 10000 in base-10000: digit=1, weight=1, scale=0
+        let pg = etl::types::PgNumeric::Value {
+            sign: etl::types::Sign::Positive,
+            weight: 1,
+            scale: 0,
+            digits: vec![1],
+        };
+        let result = numeric_to_decimal(&pg).unwrap();
+        assert_eq!(result, dec!(10000));
+    }
 
-//     #[test]
-//     fn test_positive_infinity_conversion_fails() {
-//         let pg = etl::types::PgNumeric::PositiveInfinity;
-//         let result = numeric_to_decimal(&pg);
-//         assert!(result.is_err());
-//     }
-
-//     #[test]
-//     fn test_negative_infinity_conversion_fails() {
-//         let pg = etl::types::PgNumeric::NegativeInfinity;
-//         let result = numeric_to_decimal(&pg);
-//         assert!(result.is_err());
-//     }
-
-//     #[test]
-//     fn test_reference_conversions() {
-//         let d = dec!(42.5);
-//         let pg = PgNumeric::try_from(d).unwrap();
-//         let back = rust_decimal::Decimal::try_from(&pg).unwrap();
-//         assert_eq!(d, back);
-//     }
-// }
+    #[test]
+    fn test_error_display() {
+        assert_eq!(
+            format!("{}", PgNumericConversionError::NaN),
+            "Decimal does not support NaN"
+        );
+        assert_eq!(
+            format!("{}", PgNumericConversionError::PositiveInfinity),
+            "Decimal does not support +Infinity"
+        );
+        assert_eq!(
+            format!("{}", PgNumericConversionError::NegativeInfinity),
+            "Decimal does not support -Infinity"
+        );
+        assert_eq!(
+            format!("{}", PgNumericConversionError::MalformedValue),
+            "malformed value for Pg NUMERIC"
+        );
+        assert!(format!("{}", PgNumericConversionError::ValueNotRepresentable)
+            .contains("not representable"));
+    }
+}

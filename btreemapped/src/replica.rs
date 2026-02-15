@@ -515,6 +515,311 @@ mod tests {
         #[parse]
         custom: Option<Something>,
     }
+
+    #[test]
+    fn test_new_in_memory_insert() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
+        replica.insert(Foo::new("a", None)).unwrap();
+        replica.insert(Foo::new("b", None)).unwrap();
+        assert!(replica.contains_key("a".to_string()));
+        assert!(replica.contains_key("b".to_string()));
+        assert!(!replica.contains_key("c".to_string()));
+    }
+
+    #[test]
+    fn test_read_only_insert_fails() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        let result = replica.insert(Foo::new("a", None));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_only_update_fails() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        let result =
+            replica.update(&("a".to_string(),), |f| Ok(f));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_only_remove_fails() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        let result = replica.remove(&("a".to_string(),));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_only_apply_write_fails() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        let w = BTreeWrite { upsert: None, delete: None };
+        let result = replica.apply_write(w);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_in_memory_update() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
+        let bar = Some("2024-03-01T00:00:00Z".parse().unwrap());
+        replica.insert(Foo::new("a", None)).unwrap();
+        replica
+            .update(&("a".to_string(),), |mut f| {
+                f.bar = bar;
+                Ok(f)
+            })
+            .unwrap();
+        let got = replica.get("a".to_string()).unwrap();
+        assert_eq!(got.bar, bar);
+    }
+
+    #[test]
+    fn test_in_memory_update_nonexistent() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
+        // Updating a key that doesn't exist should be a no-op
+        replica
+            .update(&("missing".to_string(),), |f| Ok(f))
+            .unwrap();
+        assert!(!replica.contains_key("missing".to_string()));
+    }
+
+    #[test]
+    fn test_in_memory_remove() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
+        replica.insert(Foo::new("a", None)).unwrap();
+        assert!(replica.contains_key("a".to_string()));
+        replica.remove(&("a".to_string(),)).unwrap();
+        assert!(!replica.contains_key("a".to_string()));
+    }
+
+    #[test]
+    fn test_apply_write_upsert_and_delete() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
+        replica.insert(Foo::new("delete_me", None)).unwrap();
+        let w = BTreeWrite {
+            upsert: Some(vec![Foo::new("new_key", None)]),
+            delete: Some(vec![("delete_me".to_string(),)]),
+        };
+        replica.apply_write(w).unwrap();
+        assert!(replica.contains_key("new_key".to_string()));
+        assert!(!replica.contains_key("delete_me".to_string()));
+    }
+
+    #[test]
+    fn test_snapshot() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
+        replica.insert(Foo::new("a", None)).unwrap();
+        replica.insert(Foo::new("b", None)).unwrap();
+        let snap = replica.snapshot();
+        assert_eq!(snap.snapshot.len(), 2);
+        assert_eq!(snap.snapshot[0].key, "a");
+        assert_eq!(snap.snapshot[1].key, "b");
+    }
+
+    #[test]
+    fn test_for_each() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        replica.insert_for_test(Foo::new("x", None));
+        replica.insert_for_test(Foo::new("y", None));
+        let mut keys = vec![];
+        replica.for_each(|f| keys.push(f.key.clone()));
+        assert_eq!(keys, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn test_get_nonexistent() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        assert!(replica.get("missing".to_string()).is_none());
+    }
+
+    #[test]
+    fn test_deref_to_arc() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        replica.insert_for_test(Foo::new("a", None));
+        // Test Deref to Arc<RwLock<...>>
+        let r = replica.read();
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn test_sequenced_deref() {
+        let s = Sequenced { seqid: 1, seqno: 2, t: vec![1, 2, 3] };
+        assert_eq!(s.len(), 3);
+        assert_eq!(s[0], 1);
+    }
+
+    #[test]
+    fn test_sequenced_deref_mut() {
+        let mut s = Sequenced { seqid: 1, seqno: 2, t: vec![1, 2, 3] };
+        s.push(4);
+        assert_eq!(s.len(), 4);
+    }
+
+    #[test]
+    fn test_apply_snapshot() {
+        let mut replica: BTreeMapReplica<Foo, 1> =
+            BTreeMapReplica::new_in_memory();
+        replica.insert(Foo::new("old", None)).unwrap();
+
+        let snap = BTreeSnapshot {
+            seqid: 42,
+            seqno: 10,
+            snapshot: vec![Foo::new("new1", None), Foo::new("new2", None)],
+        };
+        let (seqid, seqno) = replica.apply_snapshot(snap);
+        assert_eq!(seqid, 42);
+        assert_eq!(seqno, 10);
+        assert!(!replica.contains_key("old".to_string()));
+        assert!(replica.contains_key("new1".to_string()));
+        assert!(replica.contains_key("new2".to_string()));
+    }
+
+    #[test]
+    fn test_apply_update_with_snapshot() {
+        let mut replica: BTreeMapReplica<Foo, 1> =
+            BTreeMapReplica::new_sequence(0);
+        let update = Arc::new(BTreeUpdate {
+            seqid: 42,
+            seqno: 5,
+            snapshot: Some(vec![Foo::new("snap", None)]),
+            updates: vec![(("extra".to_string(),), Some(Foo::new("extra", None)))],
+        });
+        let (seqid, seqno) = replica.apply_update(update).unwrap();
+        assert_eq!(seqid, 42);
+        assert_eq!(seqno, 5);
+        assert!(replica.contains_key("snap".to_string()));
+        assert!(replica.contains_key("extra".to_string()));
+    }
+
+    #[test]
+    fn test_apply_update_incremental() {
+        let mut replica: BTreeMapReplica<Foo, 1> =
+            BTreeMapReplica::new_sequence(42);
+        // seqno starts at 0, so next expected is 1
+        let update = Arc::new(BTreeUpdate {
+            seqid: 42,
+            seqno: 1,
+            snapshot: None,
+            updates: vec![(("a".to_string(),), Some(Foo::new("a", None)))],
+        });
+        let result = replica.apply_update(update);
+        assert!(result.is_ok());
+        assert!(replica.contains_key("a".to_string()));
+    }
+
+    #[test]
+    fn test_apply_update_seqid_mismatch() {
+        let mut replica: BTreeMapReplica<Foo, 1> =
+            BTreeMapReplica::new_sequence(42);
+        let update = Arc::new(BTreeUpdate {
+            seqid: 99, // wrong seqid
+            seqno: 1,
+            snapshot: None,
+            updates: vec![],
+        });
+        let result = replica.apply_update(update);
+        assert!(matches!(result, Err(BTreeMapSyncError::SeqidMismatch)));
+    }
+
+    #[test]
+    fn test_apply_update_seqno_skip() {
+        let mut replica: BTreeMapReplica<Foo, 1> =
+            BTreeMapReplica::new_sequence(42);
+        let update = Arc::new(BTreeUpdate {
+            seqid: 42,
+            seqno: 5, // skipped from 0 to 5
+            snapshot: None,
+            updates: vec![],
+        });
+        let result = replica.apply_update(update);
+        assert!(matches!(result, Err(BTreeMapSyncError::SeqnoSkip)));
+    }
+
+    #[test]
+    fn test_apply_update_delete() {
+        let mut replica: BTreeMapReplica<Foo, 1> =
+            BTreeMapReplica::new_sequence(42);
+        // First insert via update with snapshot
+        let update1 = Arc::new(BTreeUpdate {
+            seqid: 42,
+            seqno: 1,
+            snapshot: None,
+            updates: vec![(("a".to_string(),), Some(Foo::new("a", None)))],
+        });
+        replica.apply_update(update1).unwrap();
+        assert!(replica.contains_key("a".to_string()));
+
+        // Then delete via update
+        let update2 = Arc::new(BTreeUpdate {
+            seqid: 42,
+            seqno: 2,
+            snapshot: None,
+            updates: vec![(("a".to_string(),), None)],
+        });
+        replica.apply_update(update2).unwrap();
+        assert!(!replica.contains_key("a".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_stream() {
+        use futures::StreamExt;
+
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
+        replica.insert(Foo::new("initial", None)).unwrap();
+
+        let mut stream = Box::pin(replica.subscribe());
+
+        // First item should be a snapshot
+        let first = stream.next().await.unwrap().unwrap();
+        assert!(first.snapshot.is_some());
+        assert_eq!(first.snapshot.as_ref().unwrap().len(), 1);
+        assert_eq!(first.snapshot.as_ref().unwrap()[0].key, "initial");
+    }
+
+    #[test]
+    fn test_btree_update_stream_error_display() {
+        assert_eq!(
+            format!("{}", BTreeUpdateStreamError::SeqnoSkip),
+            "seqno skipped"
+        );
+        assert_eq!(
+            format!("{}", BTreeUpdateStreamError::Lagged),
+            "stream lagged"
+        );
+        assert_eq!(
+            format!("{}", BTreeUpdateStreamError::Closed),
+            "stream ended"
+        );
+    }
+
+    #[test]
+    fn test_btree_map_sync_error_display() {
+        assert_eq!(
+            format!("{}", BTreeMapSyncError::SeqidMismatch),
+            "seqid mismatch"
+        );
+        assert_eq!(
+            format!("{}", BTreeMapSyncError::SeqnoSkip),
+            "seqno skip"
+        );
+    }
+
+    #[test]
+    fn test_new_random_seqid() {
+        let r1: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        let r2: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
+        // Extremely unlikely to get the same random seqid
+        let s1 = r1.replica.read().seqid;
+        let s2 = r2.replica.read().seqid;
+        // Not a hard guarantee, but practically always true
+        assert_ne!(s1, s2);
+    }
+
+    #[test]
+    fn test_sequence_watch() {
+        let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
+        let rx = replica.sequence.subscribe();
+        replica.insert(Foo::new("a", None)).unwrap();
+        assert!(rx.has_changed().unwrap());
+    }
 }
 
 // TODO: consider https://github.com/boustrophedon/pgtemp for integration testing
