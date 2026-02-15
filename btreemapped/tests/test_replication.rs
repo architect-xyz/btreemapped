@@ -166,7 +166,6 @@ async fn test_basic_replication() -> Result<()> {
         assert!(replica.get((1i64,)).is_some(), "Record with id 1 should still exist");
     }
 
-    // Clean up: graceful shutdown so llvm-cov can flush coverage data
     cancel.cancel();
     let _ = replication_handle.await;
 
