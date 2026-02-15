@@ -1,8 +1,11 @@
 use anyhow::Result;
 use btreemapped::{
-    replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgJson, PgSchema,
+    config::{
+        BatchConfig, PgConnectionConfig, PipelineConfig, TcpKeepaliveConfig, TlsConfig,
+    },
+    replicator::BTreeMapReplicator,
+    BTreeMapped, LIndex1, PgJson, PgSchema,
 };
-use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -86,7 +89,7 @@ fn pg_config(host: &str, port: u16) -> PgConnectionConfig {
             trusted_root_certs: "".to_string(),
             enabled: false,
         },
-        keepalive: None,
+        keepalive: TcpKeepaliveConfig::default(),
     }
 }
 
@@ -102,7 +105,9 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
-        slot_prefix: "test_json_replication".to_string(),
+        max_copy_connections_per_table: 1,
+        table_sync_copy: Default::default(),
+        invalidated_slot_behavior: Default::default(),
     }
 }
 

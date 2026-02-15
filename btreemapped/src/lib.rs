@@ -11,6 +11,19 @@ pub mod replica;
 pub mod replicator;
 pub(crate) mod sink;
 
+/// Re-exported configuration types from [`etl`].
+///
+/// Use `pipeline_id` (the `id` field on [`PipelineConfig`]) to distinguish
+/// between multiple replication pipelines.  It determines the replication
+/// slot names on the Postgres side (`supabase_etl_apply_{pipeline_id}`,
+/// `supabase_etl_table_sync_{pipeline_id}_{table_id}`).
+pub mod config {
+    pub use etl::config::{
+        BatchConfig, InvalidatedSlotBehavior, PgConnectionConfig, PipelineConfig,
+        TableSyncCopyConfig, TcpKeepaliveConfig, TlsConfig,
+    };
+}
+
 #[cfg(feature = "derive")]
 pub use btreemapped_derive::{BTreeMapped, PgSchema};
 pub use json::PgJson;

@@ -1,8 +1,13 @@
 #![cfg(feature = "rust_decimal")]
 
 use anyhow::Result;
-use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema};
-use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
+use btreemapped::{
+    config::{
+        BatchConfig, PgConnectionConfig, PipelineConfig, TcpKeepaliveConfig, TlsConfig,
+    },
+    replicator::BTreeMapReplicator,
+    BTreeMapped, LIndex1, PgSchema,
+};
 use postgres_types::Type;
 use rust_decimal::Decimal;
 use tokio_util::sync::CancellationToken;
@@ -75,7 +80,7 @@ fn pg_config(host: &str, port: u16) -> PgConnectionConfig {
             trusted_root_certs: "".to_string(),
             enabled: false,
         },
-        keepalive: None,
+        keepalive: TcpKeepaliveConfig::default(),
     }
 }
 
@@ -91,7 +96,9 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
-        slot_prefix: "test_replication".to_string(),
+        max_copy_connections_per_table: 1,
+        table_sync_copy: Default::default(),
+        invalidated_slot_behavior: Default::default(),
     }
 }
 

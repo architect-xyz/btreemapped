@@ -1,7 +1,11 @@
 use anyhow::Result;
-use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema};
-use btreemapped_derive::{BTreeMapped, PgSchema};
-use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
+use btreemapped::{
+    config::{
+        BatchConfig, PgConnectionConfig, PipelineConfig, TcpKeepaliveConfig, TlsConfig,
+    },
+    replicator::BTreeMapReplicator,
+    BTreeMapped, LIndex1, PgSchema,
+};
 use postgres_types::Type;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -87,7 +91,7 @@ fn pg_config() -> PgConnectionConfig {
             trusted_root_certs: "".to_string(),
             enabled: false,
         },
-        keepalive: None,
+        keepalive: TcpKeepaliveConfig::default(),
     }
 }
 
@@ -105,6 +109,8 @@ fn pipeline_config() -> PipelineConfig {
         table_error_retry_delay_ms: 10000,
         table_error_retry_max_attempts: 5,
         max_table_sync_workers: 4,
-        slot_prefix: "examples_basic".to_string(),
+        max_copy_connections_per_table: 1,
+        table_sync_copy: Default::default(),
+        invalidated_slot_behavior: Default::default(),
     }
 }

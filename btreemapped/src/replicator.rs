@@ -15,7 +15,10 @@ use etl::{
 use etl_postgres::types::{TableId, TableSchema};
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use tokio::sync::{futures::OwnedNotified, Notify};
 use tokio_util::sync::CancellationToken;
 
@@ -28,7 +31,7 @@ struct Inner {
     fully_synced: bool,
     /// Current replication state for each table - this is the authoritative source of truth
     /// for table states. Every table being replicated must have an entry here.
-    table_replication_states: HashMap<TableId, TableReplicationPhase>,
+    table_replication_states: BTreeMap<TableId, TableReplicationPhase>,
     /// Complete history of state transitions for each table, used for debugging and auditing.
     /// This is an append-only log that grows over time and provides visibility into
     /// table state evolution. Entries are chronologically ordered.
@@ -69,7 +72,7 @@ impl BTreeMapReplicator {
             committed_lsn: 0,
             txn_lsn: None,
             fully_synced: false,
-            table_replication_states: HashMap::new(),
+            table_replication_states: BTreeMap::new(),
             table_state_history: HashMap::new(),
             table_schemas: HashMap::new(),
             table_mappings: HashMap::new(),
@@ -151,7 +154,7 @@ impl StateStore for BTreeMapReplicator {
 
     async fn get_table_replication_states(
         &self,
-    ) -> EtlResult<HashMap<TableId, TableReplicationPhase>> {
+    ) -> EtlResult<BTreeMap<TableId, TableReplicationPhase>> {
         let inner = self.inner.lock();
 
         Ok(inner.table_replication_states.clone())
@@ -163,25 +166,26 @@ impl StateStore for BTreeMapReplicator {
         Ok(inner.table_replication_states.len())
     }
 
-    async fn update_table_replication_state(
+    async fn update_table_replication_states(
         &self,
-        table_id: TableId,
-        state: TableReplicationPhase,
+        updates: Vec<(TableId, TableReplicationPhase)>,
     ) -> EtlResult<()> {
         let mut inner = self.inner.lock();
 
-        // Store the current state in history before updating
-        if let Some(current_state) =
-            inner.table_replication_states.get(&table_id).cloned()
-        {
-            inner
-                .table_state_history
-                .entry(table_id)
-                .or_default()
-                .push(current_state);
-        }
+        for (table_id, state) in updates {
+            // Store the current state in history before updating
+            if let Some(current_state) =
+                inner.table_replication_states.get(&table_id).cloned()
+            {
+                inner
+                    .table_state_history
+                    .entry(table_id)
+                    .or_default()
+                    .push(current_state);
+            }
 
-        inner.table_replication_states.insert(table_id, state);
+            inner.table_replication_states.insert(table_id, state);
+        }
 
         if !inner.fully_synced
             && inner

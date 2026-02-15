@@ -18,7 +18,13 @@ pub async fn setup_postgres_container(
         .with_env_var("POSTGRES_PASSWORD", "postgres")
         .with_env_var("POSTGRES_USER", "postgres")
         .with_env_var("POSTGRES_DB", "testdb")
-        .with_cmd(vec!["postgres", "-c", "wal_level=logical"])
+        .with_cmd(vec![
+            "postgres",
+            "-c",
+            "wal_level=logical",
+            "-c",
+            "wal_sender_timeout=5s",
+        ])
         .start()
         .await?;
 
