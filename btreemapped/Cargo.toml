@@ -8,7 +8,7 @@ homepage = "https://www.architect.co"
 keywords = ["postgres", "database", "replication", "btreemap"]
 license = "MIT"
 name = "btreemapped"
-version = "0.4.0"
+version = "0.5.0"
 
 [[example]]
 name = "basic"
@@ -21,7 +21,7 @@ sqlx = ["rust_decimal", "dep:sqlx"]
 [dependencies]
 anyhow = { workspace = true }
 async-stream = { workspace = true }
-btreemapped_derive = { version = "0.4.0", path = "../btreemapped_derive" }
+btreemapped_derive = { version = "0.4.1", path = "../btreemapped_derive" }
 bytes = { workspace = true }
 chrono = { workspace = true }
 derive_more = { workspace = true }
