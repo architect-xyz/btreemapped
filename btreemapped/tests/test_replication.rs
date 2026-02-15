@@ -40,7 +40,9 @@ async fn setup_database(host: &str, port: u16) -> Result<()> {
         .await?;
 
     // Create publication
-    client.execute("CREATE PUBLICATION test_pub FOR TABLE test_records", &[]).await?;
+    client
+        .execute("CREATE PUBLICATION test_pub FOR TABLE test_records", &[])
+        .await?;
 
     Ok(())
 }
@@ -69,7 +71,10 @@ fn pg_config(host: &str, port: u16) -> PgConnectionConfig {
         name: "testdb".to_string(),
         username: "postgres".to_string(),
         password: Some("postgres".to_string().into()),
-        tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+        tls: TlsConfig {
+            trusted_root_certs: "".to_string(),
+            enabled: false,
+        },
         keepalive: None,
     }
 }
@@ -79,7 +84,10 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
         id: 1,
         publication_name: "test_pub".to_string(),
         pg_connection: pg_config(host, port),
-        batch: BatchConfig { max_size: 100, max_fill_ms: 100 },
+        batch: BatchConfig {
+            max_size: 100,
+            max_fill_ms: 100,
+        },
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
@@ -157,13 +165,21 @@ async fn test_basic_replication() -> Result<()> {
     {
         let client = create_postgres_client(host, port).await?;
 
-        client.execute("DELETE FROM test_records WHERE id = $1", &[&2i64]).await?;
+        client
+            .execute("DELETE FROM test_records WHERE id = $1", &[&2i64])
+            .await?;
 
         // Wait for delete to replicate
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        assert!(replica.get((2i64,)).is_none(), "Record with id 2 should be deleted");
-        assert!(replica.get((1i64,)).is_some(), "Record with id 1 should still exist");
+        assert!(
+            replica.get((2i64,)).is_none(),
+            "Record with id 2 should be deleted"
+        );
+        assert!(
+            replica.get((1i64,)).is_some(),
+            "Record with id 1 should still exist"
+        );
     }
 
     cancel.cancel();

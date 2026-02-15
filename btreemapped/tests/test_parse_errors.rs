@@ -66,10 +66,16 @@ fn strict_pipeline_config(host: &str, port: u16) -> PipelineConfig {
             name: "testdb".to_string(),
             username: "postgres".to_string(),
             password: Some("postgres".to_string().into()),
-            tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+            tls: TlsConfig {
+                trusted_root_certs: "".to_string(),
+                enabled: false,
+            },
             keepalive: None,
         },
-        batch: BatchConfig { max_size: 100, max_fill_ms: 100 },
+        batch: BatchConfig {
+            max_size: 100,
+            max_fill_ms: 100,
+        },
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
@@ -112,7 +118,10 @@ async fn test_parse_row_error_skips_invalid_rows() -> Result<()> {
     assert_eq!(r3.unwrap().value, 99);
 
     // Row with NULL in non-optional field should be skipped
-    assert!(replica.get((2i64,)).is_none(), "Row 2 (NULL value) should be skipped");
+    assert!(
+        replica.get((2i64,)).is_none(),
+        "Row 2 (NULL value) should be skipped"
+    );
 
     cancel.cancel();
     let _ = replication_handle.await;
@@ -125,9 +134,7 @@ async fn test_parse_row_error_skips_invalid_rows() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// An enum that only accepts specific string values.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Status {
     Active,
     Inactive,
@@ -209,10 +216,16 @@ fn status_pipeline_config(host: &str, port: u16) -> PipelineConfig {
             name: "testdb".to_string(),
             username: "postgres".to_string(),
             password: Some("postgres".to_string().into()),
-            tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+            tls: TlsConfig {
+                trusted_root_certs: "".to_string(),
+                enabled: false,
+            },
             keepalive: None,
         },
-        batch: BatchConfig { max_size: 100, max_fill_ms: 100 },
+        batch: BatchConfig {
+            max_size: 100,
+            max_fill_ms: 100,
+        },
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,

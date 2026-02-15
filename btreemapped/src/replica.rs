@@ -78,6 +78,7 @@ impl<T> std::ops::DerefMut for Sequenced<T> {
 
 // NB alee: a bit unfortunate that we have to specify the INDEX_ARITY here
 #[derive(Debug, Clone)]
+#[allow(clippy::type_complexity)]
 pub struct BTreeMapReplica<T: BTreeMapped<N>, const N: usize> {
     pub replica: Arc<RwLock<Sequenced<BTreeMap<T::LIndex, T>>>>,
     pub sequence: watch::Sender<(u64, u64)>,
@@ -99,6 +100,12 @@ pub enum BTreeMapSyncError {
     SeqidMismatch,
     #[error("seqno skip")]
     SeqnoSkip,
+}
+
+impl<T: BTreeMapped<N>, const N: usize> Default for BTreeMapReplica<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
@@ -247,7 +254,11 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
         for (_i, t) in replica.iter() {
             snapshot.push(t.clone());
         }
-        BTreeSnapshot { seqid: replica.seqid, seqno: replica.seqno, snapshot }
+        BTreeSnapshot {
+            seqid: replica.seqid,
+            seqno: replica.seqno,
+            snapshot,
+        }
     }
 
     /// Subscribe to a self-contained updates stream.  The first element is
@@ -361,10 +372,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
     {
         let i: T::LIndex = i.into();
         let replica = self.replica.read();
-        match RwLockReadGuard::try_map(replica, |r| r.get(&i)) {
-            Ok(t) => Some(t),
-            Err(_) => None,
-        }
+        RwLockReadGuard::try_map(replica, |r| r.get(&i)).ok()
     }
 
     pub fn for_each<F>(&self, mut f: F)
@@ -409,7 +417,10 @@ mod tests {
 
     impl Foo {
         fn new(key: &str, bar: Option<DateTime<Utc>>) -> Self {
-            Self { key: key.to_string(), bar }
+            Self {
+                key: key.to_string(),
+                bar,
+            }
         }
     }
 
@@ -429,7 +440,10 @@ mod tests {
         replica.for_range1("abc".to_string()..="ghi".to_string(), |foo| {
             io.push(format!("{} {:?}", foo.key, foo.bar));
         });
-        assert_eq!(io, vec!["abc None", "def Some(2024-03-01T00:30:44Z)", "ghi None"]);
+        assert_eq!(
+            io,
+            vec!["abc None", "def Some(2024-03-01T00:30:44Z)", "ghi None"]
+        );
     }
 
     #[derive(Debug, Clone, BTreeMapped)]
@@ -482,7 +496,10 @@ mod tests {
         replica.for_range2(Cow::Borrowed("Charlie"), 1000..1003, |car| {
             io4.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
-        assert_eq!(io4, vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]);
+        assert_eq!(
+            io4,
+            vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]
+        );
     }
 
     // NB: testing the macro in `Baz` compiles
@@ -536,8 +553,7 @@ mod tests {
     #[test]
     fn test_read_only_update_fails() {
         let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
-        let result =
-            replica.update(&("a".to_string(),), |f| Ok(f));
+        let result = replica.update(&("a".to_string(),), |f| Ok(f));
         assert!(result.is_err());
     }
 
@@ -551,7 +567,10 @@ mod tests {
     #[test]
     fn test_read_only_apply_write_fails() {
         let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
-        let w = BTreeWrite { upsert: None, delete: None };
+        let w = BTreeWrite {
+            upsert: None,
+            delete: None,
+        };
         let result = replica.apply_write(w);
         assert!(result.is_err());
     }
@@ -641,22 +660,29 @@ mod tests {
 
     #[test]
     fn test_sequenced_deref() {
-        let s = Sequenced { seqid: 1, seqno: 2, t: vec![1, 2, 3] };
+        let s = Sequenced {
+            seqid: 1,
+            seqno: 2,
+            t: vec![1, 2, 3],
+        };
         assert_eq!(s.len(), 3);
         assert_eq!(s[0], 1);
     }
 
     #[test]
     fn test_sequenced_deref_mut() {
-        let mut s = Sequenced { seqid: 1, seqno: 2, t: vec![1, 2, 3] };
+        let mut s = Sequenced {
+            seqid: 1,
+            seqno: 2,
+            t: vec![1, 2, 3],
+        };
         s.push(4);
         assert_eq!(s.len(), 4);
     }
 
     #[test]
     fn test_apply_snapshot() {
-        let mut replica: BTreeMapReplica<Foo, 1> =
-            BTreeMapReplica::new_in_memory();
+        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
         replica.insert(Foo::new("old", None)).unwrap();
 
         let snap = BTreeSnapshot {
@@ -674,8 +700,7 @@ mod tests {
 
     #[test]
     fn test_apply_update_with_snapshot() {
-        let mut replica: BTreeMapReplica<Foo, 1> =
-            BTreeMapReplica::new_sequence(0);
+        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_sequence(0);
         let update = Arc::new(BTreeUpdate {
             seqid: 42,
             seqno: 5,
@@ -691,8 +716,7 @@ mod tests {
 
     #[test]
     fn test_apply_update_incremental() {
-        let mut replica: BTreeMapReplica<Foo, 1> =
-            BTreeMapReplica::new_sequence(42);
+        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_sequence(42);
         // seqno starts at 0, so next expected is 1
         let update = Arc::new(BTreeUpdate {
             seqid: 42,
@@ -707,8 +731,7 @@ mod tests {
 
     #[test]
     fn test_apply_update_seqid_mismatch() {
-        let mut replica: BTreeMapReplica<Foo, 1> =
-            BTreeMapReplica::new_sequence(42);
+        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_sequence(42);
         let update = Arc::new(BTreeUpdate {
             seqid: 99, // wrong seqid
             seqno: 1,
@@ -721,8 +744,7 @@ mod tests {
 
     #[test]
     fn test_apply_update_seqno_skip() {
-        let mut replica: BTreeMapReplica<Foo, 1> =
-            BTreeMapReplica::new_sequence(42);
+        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_sequence(42);
         let update = Arc::new(BTreeUpdate {
             seqid: 42,
             seqno: 5, // skipped from 0 to 5
@@ -735,8 +757,7 @@ mod tests {
 
     #[test]
     fn test_apply_update_delete() {
-        let mut replica: BTreeMapReplica<Foo, 1> =
-            BTreeMapReplica::new_sequence(42);
+        let mut replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_sequence(42);
         // First insert via update with snapshot
         let update1 = Arc::new(BTreeUpdate {
             seqid: 42,
@@ -796,10 +817,7 @@ mod tests {
             format!("{}", BTreeMapSyncError::SeqidMismatch),
             "seqid mismatch"
         );
-        assert_eq!(
-            format!("{}", BTreeMapSyncError::SeqnoSkip),
-            "seqno skip"
-        );
+        assert_eq!(format!("{}", BTreeMapSyncError::SeqnoSkip), "seqno skip");
     }
 
     #[test]

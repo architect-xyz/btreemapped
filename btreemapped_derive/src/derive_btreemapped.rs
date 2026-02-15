@@ -80,9 +80,17 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
             .map(|attr| attr.parse_args::<Type>().unwrap())
         {
             field_try_from.insert(name.clone(), try_from_ty);
-        } else if field.attrs.iter().any(|attr| attr.path().is_ident("try_from_json")) {
+        } else if field
+            .attrs
+            .iter()
+            .any(|attr| attr.path().is_ident("try_from_json"))
+        {
             field_try_from_json.insert(name.clone());
-        } else if field.attrs.iter().any(|attr| attr.path().is_ident("pg_enum")) {
+        } else if field
+            .attrs
+            .iter()
+            .any(|attr| attr.path().is_ident("pg_enum"))
+        {
             field_enum.insert(name.clone());
         } else if field.attrs.iter().any(|attr| attr.path().is_ident("parse")) {
             field_parse.insert(name.clone());
@@ -114,7 +122,10 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
         let (name, _) = &index_fields[0];
         quote! { (self.#name.clone(),) }
     } else {
-        let names = index_fields.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
+        let names = index_fields
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
         quote! { (#(self.#names.clone()),*) }
     };
 
@@ -314,7 +325,10 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
         let (name, _) = &index_fields[0];
         quote! { (#name,) }
     } else {
-        let names = index_fields.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
+        let names = index_fields
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
         quote! { (#(#names),*) }
     };
 

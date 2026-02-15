@@ -179,9 +179,12 @@ pub(crate) fn numeric_to_decimal(
     use rust_decimal::MathematicalOps;
 
     let (digits, sign, mut weight, scale) = match numeric {
-        etl::types::PgNumeric::Value { ref digits, sign, weight, scale } => {
-            (digits, sign, *weight, *scale)
-        }
+        etl::types::PgNumeric::Value {
+            ref digits,
+            sign,
+            weight,
+            scale,
+        } => (digits, sign, *weight, *scale),
         etl::types::PgNumeric::NaN => {
             return Err(PgNumericConversionError::NaN);
         }
@@ -198,8 +201,7 @@ pub(crate) fn numeric_to_decimal(
         return Ok(rust_decimal::Decimal::ZERO);
     }
 
-    let scale = u32::try_from(scale)
-        .map_err(|_| PgNumericConversionError::InvalidScale(scale))?;
+    let scale = u32::from(scale);
 
     let mut value = rust_decimal::Decimal::ZERO;
 
@@ -217,7 +219,9 @@ pub(crate) fn numeric_to_decimal(
             .checked_add(part)
             .ok_or(PgNumericConversionError::ValueNotRepresentable)?;
 
-        weight = weight.checked_sub(1).ok_or(PgNumericConversionError::MalformedValue)?;
+        weight = weight
+            .checked_sub(1)
+            .ok_or(PgNumericConversionError::MalformedValue)?;
     }
 
     match sign {
@@ -452,7 +456,9 @@ mod tests {
             format!("{}", PgNumericConversionError::MalformedValue),
             "malformed value for Pg NUMERIC"
         );
-        assert!(format!("{}", PgNumericConversionError::ValueNotRepresentable)
-            .contains("not representable"));
+        assert!(
+            format!("{}", PgNumericConversionError::ValueNotRepresentable)
+                .contains("not representable")
+        );
     }
 }

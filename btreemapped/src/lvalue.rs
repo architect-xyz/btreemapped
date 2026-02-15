@@ -23,7 +23,7 @@ impl<T> LValue<T> {
     }
 }
 
-impl<'a, T: std::fmt::Display> std::fmt::Display for LValue<T> {
+impl<T: std::fmt::Display> std::fmt::Display for LValue<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LValue::NegInfinity => write!(f, "-∞"),
@@ -156,10 +156,8 @@ mod tests {
 
     #[test]
     fn test_lindex2_try_from_ref_incomplete() {
-        let idx = LIndex2::<String, i64>(
-            LValue::Exact("key".to_string()),
-            LValue::Infinity,
-        );
+        let idx =
+            LIndex2::<String, i64>(LValue::Exact("key".to_string()), LValue::Infinity);
         let result: Result<(String, i64), _> = (&idx).try_into();
         assert!(result.is_err());
     }

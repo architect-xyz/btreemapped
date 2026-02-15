@@ -23,10 +23,16 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
             name: "testdb".to_string(),
             username: "repl_user".to_string(),
             password: Some("repl_pass".to_string().into()),
-            tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+            tls: TlsConfig {
+                trusted_root_certs: "".to_string(),
+                enabled: false,
+            },
             keepalive: None,
         },
-        batch: BatchConfig { max_size: 100, max_fill_ms: 100 },
+        batch: BatchConfig {
+            max_size: 100,
+            max_fill_ms: 100,
+        },
         table_error_retry_delay_ms: 500,
         table_error_retry_max_attempts: 5,
         max_table_sync_workers: 4,
@@ -150,7 +156,10 @@ async fn test_rollback_on_connection_kill() -> Result<()> {
         }
     }
 
-    assert!(killed, "should have found and killed a table sync worker connection");
+    assert!(
+        killed,
+        "should have found and killed a table sync worker connection"
+    );
 
     // Poll until all rows are synced (retry delay + re-COPY with pg_sleep).
     for _ in 0..200 {

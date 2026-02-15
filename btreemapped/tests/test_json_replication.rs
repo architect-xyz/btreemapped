@@ -39,7 +39,9 @@ async fn setup_database(host: &str, port: u16) -> Result<()> {
         .await?;
 
     // Create publication
-    client.execute("CREATE PUBLICATION json_pub FOR TABLE json_records", &[]).await?;
+    client
+        .execute("CREATE PUBLICATION json_pub FOR TABLE json_records", &[])
+        .await?;
 
     Ok(())
 }
@@ -51,14 +53,22 @@ async fn insert_test_data(host: &str, port: u16) -> Result<()> {
     client
         .execute(
             "INSERT INTO json_records (id, name, data) VALUES ($1, $2, $3)",
-            &[&1i64, &"Alice", &serde_json::json!({"score": 100, "level": 5})],
+            &[
+                &1i64,
+                &"Alice",
+                &serde_json::json!({"score": 100, "level": 5}),
+            ],
         )
         .await?;
 
     client
         .execute(
             "INSERT INTO json_records (id, name, data) VALUES ($1, $2, $3)",
-            &[&2i64, &"Bob", &serde_json::json!({"score": 200, "level": 10})],
+            &[
+                &2i64,
+                &"Bob",
+                &serde_json::json!({"score": 200, "level": 10}),
+            ],
         )
         .await?;
 
@@ -72,7 +82,10 @@ fn pg_config(host: &str, port: u16) -> PgConnectionConfig {
         name: "testdb".to_string(),
         username: "postgres".to_string(),
         password: Some("postgres".to_string().into()),
-        tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+        tls: TlsConfig {
+            trusted_root_certs: "".to_string(),
+            enabled: false,
+        },
         keepalive: None,
     }
 }
@@ -82,7 +95,10 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
         id: 1,
         publication_name: "json_pub".to_string(),
         pg_connection: pg_config(host, port),
-        batch: BatchConfig { max_size: 100, max_fill_ms: 100 },
+        batch: BatchConfig {
+            max_size: 100,
+            max_fill_ms: 100,
+        },
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
@@ -160,20 +176,32 @@ async fn test_json_replication() -> Result<()> {
             Some(&150),
             "Score should be updated to 150"
         );
-        assert_eq!(record1.data.get("level"), Some(&7), "Level should be updated to 7");
+        assert_eq!(
+            record1.data.get("level"),
+            Some(&7),
+            "Level should be updated to 7"
+        );
     }
 
     // Test delete
     {
         let client = create_postgres_client(host, port).await?;
 
-        client.execute("DELETE FROM json_records WHERE id = $1", &[&2i64]).await?;
+        client
+            .execute("DELETE FROM json_records WHERE id = $1", &[&2i64])
+            .await?;
 
         // Wait for delete to replicate
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        assert!(replica.get((2i64,)).is_none(), "Record with id 2 should be deleted");
-        assert!(replica.get((1i64,)).is_some(), "Record with id 1 should still exist");
+        assert!(
+            replica.get((2i64,)).is_none(),
+            "Record with id 2 should be deleted"
+        );
+        assert!(
+            replica.get((1i64,)).is_some(),
+            "Record with id 1 should still exist"
+        );
     }
 
     cancel.cancel();

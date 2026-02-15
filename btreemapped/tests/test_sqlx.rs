@@ -49,7 +49,9 @@ async fn test_sqlx_decode() -> Result<()> {
     let (_container, port) = setup_postgres_container().await?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect(&format!("postgres://postgres:postgres@localhost:{port}/testdb"))
+        .connect(&format!(
+            "postgres://postgres:postgres@localhost:{port}/testdb"
+        ))
         .await?;
 
     setup_table(&pool).await?;
@@ -62,8 +64,14 @@ async fn test_sqlx_decode() -> Result<()> {
     assert_eq!(1, records.len());
     let record = records.pop().unwrap();
 
-    assert_eq!(*record.data1.get("str_key").unwrap(), "str_value".to_string());
-    assert_eq!(*record.data2.get("dec_key").unwrap(), Decimal::from_f64(1.234).unwrap());
+    assert_eq!(
+        *record.data1.get("str_key").unwrap(),
+        "str_value".to_string()
+    );
+    assert_eq!(
+        *record.data2.get("dec_key").unwrap(),
+        Decimal::from_f64(1.234).unwrap()
+    );
     assert_eq!(*record.data3.get("num_key").unwrap(), 123);
 
     Ok(())
@@ -74,7 +82,9 @@ async fn test_sqlx_encode() -> Result<()> {
     let (_container, port) = setup_postgres_container().await?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect(&format!("postgres://postgres:postgres@localhost:{port}/testdb"))
+        .connect(&format!(
+            "postgres://postgres:postgres@localhost:{port}/testdb"
+        ))
         .await?;
 
     setup_table(&pool).await?;
