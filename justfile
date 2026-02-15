@@ -1,3 +1,5 @@
+nightly := "nightly-2025-12-07"
+
 # List available recipes
 default:
     @just --list
@@ -22,7 +24,7 @@ fix:
 
 # Format all Rust and TOML files
 format:
-    cargo +nightly fmt --all
+    cargo +{{nightly}} fmt --all
     taplo fmt
 
 # Run clippy lints

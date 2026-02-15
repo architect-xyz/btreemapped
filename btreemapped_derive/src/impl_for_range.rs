@@ -24,7 +24,8 @@ impl Parse for LIndexType {
                 } else {
                     None
                 }
-            }).cloned()
+            })
+            .cloned()
             .collect();
         Ok(LIndexType { ident, args })
     }

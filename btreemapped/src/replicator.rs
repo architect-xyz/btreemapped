@@ -111,8 +111,7 @@ impl BTreeMapReplicator {
         let pipeline_fut = pipeline.wait().fuse();
         pin_mut!(pipeline_fut);
 
-        let cancellation_token =
-            cancellation_token.unwrap_or_default();
+        let cancellation_token = cancellation_token.unwrap_or_default();
         let cancellation = cancellation_token.cancelled().fuse();
         pin_mut!(cancellation);
 
@@ -189,10 +188,10 @@ impl StateStore for BTreeMapReplicator {
                 .table_replication_states
                 .values()
                 .all(|state| matches!(state, TableReplicationPhase::SyncDone { .. }))
-            {
-                inner.fully_synced = true;
-                self.synced.notify_waiters();
-            }
+        {
+            inner.fully_synced = true;
+            self.synced.notify_waiters();
+        }
 
         Ok(())
     }
