@@ -2,7 +2,6 @@ use anyhow::Result;
 use btreemapped::{
     replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgJson, PgSchema,
 };
-use btreemapped_derive::{BTreeMapped, PgSchema};
 use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
 use serde::Serialize;

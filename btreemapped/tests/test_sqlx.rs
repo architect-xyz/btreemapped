@@ -23,7 +23,7 @@ async fn setup_table(pool: &PgPool) -> Result<()> {
             id SERIAL PRIMARY KEY,
             data1 JSONB,
             data2 JSONB,
-            data3 JSON,
+            data3 JSON
         )"#
     ).execute(pool).await?;
 
@@ -33,11 +33,11 @@ async fn setup_table(pool: &PgPool) -> Result<()> {
 async fn insert_test_data(pool: &PgPool) -> Result<()> {
     #[rustfmt::skip]
     sqlx::query(r#"
-        INSERT INTO json_records (data1, data2, data3, data4)
+        INSERT INTO json_records (data1, data2, data3)
         VALUES (
-            '{"str_key": "str_value"}', 
+            '{"str_key": "str_value"}',
             '{"dec_key": 1.234}',
-            '{"num_key": 123}',
+            '{"num_key": 123}'
         )
     "#).execute(pool).await?;
 
