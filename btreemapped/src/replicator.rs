@@ -31,7 +31,7 @@ struct Inner {
     fully_synced: bool,
     /// Current replication state for each table - this is the authoritative source of truth
     /// for table states. Every table being replicated must have an entry here.
-    table_replication_states: HashMap<TableId, TableReplicationPhase>,
+    table_replication_states: BTreeMap<TableId, TableReplicationPhase>,
     /// Complete history of state transitions for each table, used for debugging and auditing.
     /// This is an append-only log that grows over time and provides visibility into
     /// table state evolution. Entries are chronologically ordered.
@@ -72,7 +72,7 @@ impl BTreeMapReplicator {
             committed_lsn: 0,
             txn_lsn: None,
             fully_synced: false,
-            table_replication_states: HashMap::new(),
+            table_replication_states: BTreeMap::new(),
             table_state_history: HashMap::new(),
             table_schemas: HashMap::new(),
             table_mappings: HashMap::new(),
@@ -157,7 +157,7 @@ impl StateStore for BTreeMapReplicator {
     ) -> EtlResult<BTreeMap<TableId, TableReplicationPhase>> {
         let inner = self.inner.lock();
 
-        Ok(inner.table_replication_states.iter().map(|(&k, v)| (k, v.clone())).collect())
+        Ok(inner.table_replication_states.clone())
     }
 
     async fn load_table_replication_states(&self) -> EtlResult<usize> {
