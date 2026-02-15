@@ -86,3 +86,129 @@ lindex!(LIndex2, N = 2, I0, I1);
 lindex!(LIndex3, N = 3, I0, I1, I2);
 lindex!(LIndex4, N = 4, I0, I1, I2, I3);
 lindex!(LIndex5, N = 5, I0, I1, I2, I3, I4);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lvalue_exact() {
+        assert_eq!(LValue::Exact(42).exact(), Some(&42));
+        assert_eq!(LValue::<i32>::NegInfinity.exact(), None);
+        assert_eq!(LValue::<i32>::Infinity.exact(), None);
+    }
+
+    #[test]
+    fn test_lvalue_display() {
+        assert_eq!(format!("{}", LValue::<i32>::NegInfinity), "-∞");
+        assert_eq!(format!("{}", LValue::Exact(42)), "42");
+        assert_eq!(format!("{}", LValue::Exact("hello")), "hello");
+        assert_eq!(format!("{}", LValue::<i32>::Infinity), "∞");
+    }
+
+    #[test]
+    fn test_lvalue_ordering() {
+        assert!(LValue::<i32>::NegInfinity < LValue::Exact(i32::MIN));
+        assert!(LValue::Exact(i32::MAX) < LValue::<i32>::Infinity);
+        assert!(LValue::Exact(1) < LValue::Exact(2));
+        assert!(LValue::<i32>::NegInfinity < LValue::<i32>::Infinity);
+    }
+
+    #[test]
+    fn test_lindex1_from_value() {
+        let idx = LIndex1::from(42i32);
+        assert_eq!(idx.0, LValue::Exact(42));
+    }
+
+    #[test]
+    fn test_lindex1_from_tuple() {
+        let idx = LIndex1::from((42i32,));
+        assert_eq!(idx.0, LValue::Exact(42));
+    }
+
+    #[test]
+    fn test_lindex1_try_from_ref() {
+        let idx = LIndex1::from(42i32);
+        let tuple: (i32,) = (&idx).try_into().unwrap();
+        assert_eq!(tuple, (42,));
+    }
+
+    #[test]
+    fn test_lindex1_try_from_ref_incomplete() {
+        let idx = LIndex1::<i32>(LValue::NegInfinity);
+        let result: Result<(i32,), _> = (&idx).try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_lindex2_from_tuple() {
+        let idx = LIndex2::from(("hello".to_string(), 42i64));
+        assert_eq!(idx.0, LValue::Exact("hello".to_string()));
+        assert_eq!(idx.1, LValue::Exact(42i64));
+    }
+
+    #[test]
+    fn test_lindex2_try_from_ref() {
+        let idx = LIndex2::from(("key".to_string(), 99i64));
+        let tuple: (String, i64) = (&idx).try_into().unwrap();
+        assert_eq!(tuple, ("key".to_string(), 99));
+    }
+
+    #[test]
+    fn test_lindex2_try_from_ref_incomplete() {
+        let idx = LIndex2::<String, i64>(
+            LValue::Exact("key".to_string()),
+            LValue::Infinity,
+        );
+        let result: Result<(String, i64), _> = (&idx).try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_lindex3_from_tuple() {
+        let idx = LIndex3::from((1i32, 2i32, 3i32));
+        assert_eq!(idx.0, LValue::Exact(1));
+        assert_eq!(idx.1, LValue::Exact(2));
+        assert_eq!(idx.2, LValue::Exact(3));
+    }
+
+    #[test]
+    fn test_lindex3_try_from_ref() {
+        let idx = LIndex3::from((1i32, 2i32, 3i32));
+        let tuple: (i32, i32, i32) = (&idx).try_into().unwrap();
+        assert_eq!(tuple, (1, 2, 3));
+    }
+
+    #[test]
+    fn test_lindex4_roundtrip() {
+        let idx = LIndex4::from((1i32, 2i32, 3i32, 4i32));
+        let tuple: (i32, i32, i32, i32) = (&idx).try_into().unwrap();
+        assert_eq!(tuple, (1, 2, 3, 4));
+    }
+
+    #[test]
+    fn test_lindex5_roundtrip() {
+        let idx = LIndex5::from((1i32, 2i32, 3i32, 4i32, 5i32));
+        let tuple: (i32, i32, i32, i32, i32) = (&idx).try_into().unwrap();
+        assert_eq!(tuple, (1, 2, 3, 4, 5));
+    }
+
+    #[test]
+    fn test_lindex_debug() {
+        let idx = LIndex1::from(42i32);
+        let debug = format!("{:?}", idx);
+        assert!(debug.contains("42"));
+    }
+
+    #[test]
+    fn test_lindex_clone_eq_hash() {
+        let idx1 = LIndex1::from(42i32);
+        let idx2 = idx1.clone();
+        assert_eq!(idx1, idx2);
+
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(idx1.clone());
+        assert!(set.contains(&idx2));
+    }
+}

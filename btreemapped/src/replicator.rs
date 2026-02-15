@@ -441,3 +441,736 @@ pub(crate) fn normalized_table_name(table_name: &TableName) -> String {
 
 static SCHEMA_CHANGE_NOT_ALLOWED_ERROR: &'static str =
     "btreemapped destination does not tolerate online schema changes or table renames";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::LIndex1;
+    use etl::state::table::TableReplicationPhase;
+    use etl::types::PgLsn;
+    use etl_postgres::types::{TableId, TableSchema};
+
+    #[derive(Debug, Clone, BTreeMapped)]
+    #[btreemap(index = ["key"])]
+    struct TestRow {
+        key: String,
+    }
+
+    fn make_table_id(oid: u32) -> TableId {
+        TableId::new(oid)
+    }
+
+    fn make_table_schema(id: u32, schema: &str, name: &str) -> TableSchema {
+        TableSchema {
+            id: make_table_id(id),
+            name: TableName { schema: schema.to_string(), name: name.to_string() },
+            column_schemas: vec![],
+        }
+    }
+
+    fn make_table_schema_with_columns(
+        id: u32,
+        schema: &str,
+        name: &str,
+    ) -> TableSchema {
+        use etl::types::Type;
+        use etl_postgres::types::ColumnSchema;
+
+        TableSchema {
+            id: make_table_id(id),
+            name: TableName { schema: schema.to_string(), name: name.to_string() },
+            column_schemas: vec![ColumnSchema {
+                name: "key".to_string(),
+                typ: Type::TEXT,
+                modifier: -1,
+                nullable: false,
+                primary: true,
+            }],
+        }
+    }
+
+    #[test]
+    fn test_normalized_table_name_public_schema() {
+        let tn =
+            TableName { schema: "public".to_string(), name: "users".to_string() };
+        assert_eq!(normalized_table_name(&tn), "users");
+    }
+
+    #[test]
+    fn test_normalized_table_name_custom_schema() {
+        let tn =
+            TableName { schema: "custom".to_string(), name: "users".to_string() };
+        let result = normalized_table_name(&tn);
+        assert!(result.contains("custom"));
+        assert!(result.contains("users"));
+    }
+
+    #[test]
+    fn test_replicator_default() {
+        let r1 = BTreeMapReplicator::new();
+        let r2 = BTreeMapReplicator::default();
+        drop(r1);
+        drop(r2);
+    }
+
+    #[test]
+    fn test_add_replica() {
+        let replicator = BTreeMapReplicator::new();
+        let _replica = replicator.add_replica::<TestRow, 1>("test_table");
+        let inner = replicator.inner.lock();
+        assert!(inner.pending_sinks.contains_key("test_table"));
+    }
+
+    #[tokio::test]
+    async fn test_state_store_table_replication_state() {
+        let store = BTreeMapReplicator::new();
+        let table_id = make_table_id(1);
+
+        // Initially no state
+        let state = store.get_table_replication_state(table_id).await.unwrap();
+        assert!(state.is_none());
+
+        // Set state
+        store
+            .update_table_replication_state(table_id, TableReplicationPhase::Init)
+            .await
+            .unwrap();
+        let state = store.get_table_replication_state(table_id).await.unwrap();
+        assert!(matches!(state, Some(TableReplicationPhase::Init)));
+    }
+
+    #[tokio::test]
+    async fn test_state_store_get_all_states() {
+        let store = BTreeMapReplicator::new();
+        let t1 = make_table_id(1);
+        let t2 = make_table_id(2);
+
+        store
+            .update_table_replication_state(t1, TableReplicationPhase::Init)
+            .await
+            .unwrap();
+        store
+            .update_table_replication_state(t2, TableReplicationPhase::DataSync)
+            .await
+            .unwrap();
+
+        let states = store.get_table_replication_states().await.unwrap();
+        assert_eq!(states.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_state_store_load_count() {
+        let store = BTreeMapReplicator::new();
+        assert_eq!(store.load_table_replication_states().await.unwrap(), 0);
+
+        store
+            .update_table_replication_state(
+                make_table_id(1),
+                TableReplicationPhase::Init,
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.load_table_replication_states().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_state_store_update_history_and_rollback() {
+        let store = BTreeMapReplicator::new();
+        let tid = make_table_id(1);
+
+        store
+            .update_table_replication_state(tid, TableReplicationPhase::Init)
+            .await
+            .unwrap();
+        store
+            .update_table_replication_state(tid, TableReplicationPhase::DataSync)
+            .await
+            .unwrap();
+
+        // Rollback should go back to Init
+        let prev = store.rollback_table_replication_state(tid).await.unwrap();
+        assert!(matches!(prev, TableReplicationPhase::Init));
+
+        // Current state should now be Init
+        let state = store.get_table_replication_state(tid).await.unwrap();
+        assert!(matches!(state, Some(TableReplicationPhase::Init)));
+    }
+
+    #[tokio::test]
+    async fn test_state_store_rollback_no_history() {
+        let store = BTreeMapReplicator::new();
+        let tid = make_table_id(1);
+
+        // No state set at all
+        let result = store.rollback_table_replication_state(tid).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_state_store_table_mappings() {
+        let store = BTreeMapReplicator::new();
+        let tid = make_table_id(1);
+
+        // No mapping initially
+        assert!(store.get_table_mapping(&tid).await.unwrap().is_none());
+        assert_eq!(store.load_table_mappings().await.unwrap(), 0);
+
+        // Store a mapping
+        store.store_table_mapping(tid, "dest_table".to_string()).await.unwrap();
+
+        assert_eq!(
+            store.get_table_mapping(&tid).await.unwrap(),
+            Some("dest_table".to_string())
+        );
+        assert_eq!(store.load_table_mappings().await.unwrap(), 1);
+
+        let mappings = store.get_table_mappings().await.unwrap();
+        assert_eq!(mappings.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_schema_store() {
+        let store = BTreeMapReplicator::new();
+        let schema = make_table_schema(1, "public", "test_table");
+        let tid = make_table_id(1);
+
+        // No schema initially
+        assert!(store.get_table_schema(&tid).await.unwrap().is_none());
+        assert_eq!(store.load_table_schemas().await.unwrap(), 0);
+
+        // Store schema
+        store.store_table_schema(schema).await.unwrap();
+
+        assert!(store.get_table_schema(&tid).await.unwrap().is_some());
+        assert_eq!(store.load_table_schemas().await.unwrap(), 1);
+
+        let schemas = store.get_table_schemas().await.unwrap();
+        assert_eq!(schemas.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_schema_store_duplicate_rejected() {
+        let store = BTreeMapReplicator::new();
+        // Register a pending sink so that the first store_table_schema creates a sink
+        let _replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema1 = make_table_schema(1, "public", "test_table");
+        let schema2 = make_table_schema(1, "public", "test_table");
+
+        store.store_table_schema(schema1).await.unwrap();
+        // Storing the same table_id again should fail because a sink exists
+        let result = store.store_table_schema(schema2).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_schema_store_assigns_sink() {
+        let store = BTreeMapReplicator::new();
+        let _replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema(1, "public", "test_table");
+
+        store.store_table_schema(schema).await.unwrap();
+
+        // Pending sink should be removed, and a real sink should exist
+        let inner = store.inner.lock();
+        assert!(!inner.pending_sinks.contains_key("test_table"));
+        assert!(inner.sinks.contains_key(&make_table_id(1)));
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_store() {
+        let store = BTreeMapReplicator::new();
+        let tid = make_table_id(1);
+
+        store
+            .update_table_replication_state(tid, TableReplicationPhase::Init)
+            .await
+            .unwrap();
+        store.store_table_mapping(tid, "dest".to_string()).await.unwrap();
+        store.store_table_schema(make_table_schema(1, "public", "t")).await.unwrap();
+
+        // Cleanup
+        store.cleanup_table_state(tid).await.unwrap();
+
+        assert!(store.get_table_replication_state(tid).await.unwrap().is_none());
+        assert!(store.get_table_mapping(&tid).await.unwrap().is_none());
+        assert!(store.get_table_schema(&tid).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_destination_name() {
+        assert_eq!(BTreeMapReplicator::name(), "btreemapped");
+    }
+
+    #[tokio::test]
+    async fn test_fully_synced_notification() {
+        let store = BTreeMapReplicator::new();
+        let tid = make_table_id(1);
+
+        store
+            .update_table_replication_state(tid, TableReplicationPhase::Init)
+            .await
+            .unwrap();
+
+        // Not synced yet
+        {
+            let inner = store.inner.lock();
+            assert!(!inner.fully_synced);
+        }
+
+        // Set to SyncDone
+        store
+            .update_table_replication_state(
+                tid,
+                TableReplicationPhase::SyncDone { lsn: PgLsn::from(0u64) },
+            )
+            .await
+            .unwrap();
+
+        // Now fully synced
+        {
+            let inner = store.inner.lock();
+            assert!(inner.fully_synced);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_destination_truncate() {
+        let store = BTreeMapReplicator::new();
+        let _replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema(1, "public", "test_table");
+        store.store_table_schema(schema).await.unwrap();
+
+        let tid = make_table_id(1);
+        // Truncate should succeed even with empty table
+        store.truncate_table(tid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_destination_truncate_no_sink() {
+        let store = BTreeMapReplicator::new();
+        // Truncate with no sink should be a no-op
+        store.truncate_table(make_table_id(999)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_table_rows_no_sink() {
+        let store = BTreeMapReplicator::new();
+        // Write rows with no sink should be a no-op
+        store
+            .write_table_rows(make_table_id(999), vec![])
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_begin_commit() {
+        use etl::types::{BeginEvent, CommitEvent, Event};
+
+        let store = BTreeMapReplicator::new();
+        let events = vec![
+            Event::Begin(BeginEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                timestamp: 0,
+                xid: 1,
+            }),
+            Event::Commit(CommitEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                flags: 0,
+                end_lsn: 300u64,
+                timestamp: 0,
+            }),
+        ];
+        store.write_events(events).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_commit_without_begin() {
+        use etl::types::{CommitEvent, Event};
+
+        let store = BTreeMapReplicator::new();
+        let events = vec![Event::Commit(CommitEvent {
+            start_lsn: PgLsn::from(100u64),
+            commit_lsn: PgLsn::from(200u64),
+            flags: 0,
+            end_lsn: 300u64,
+            timestamp: 0,
+        })];
+        let result = store.write_events(events).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_commit_lsn_mismatch() {
+        use etl::types::{BeginEvent, CommitEvent, Event};
+
+        let store = BTreeMapReplicator::new();
+        let events = vec![
+            Event::Begin(BeginEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                timestamp: 0,
+                xid: 1,
+            }),
+            Event::Commit(CommitEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(999u64), // mismatch
+                flags: 0,
+                end_lsn: 300u64,
+                timestamp: 0,
+            }),
+        ];
+        let result = store.write_events(events).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_unsupported_and_relation() {
+        use etl::types::Event;
+
+        let store = BTreeMapReplicator::new();
+        // These should be no-ops
+        let events = vec![Event::Unsupported, Event::Relation(etl::types::RelationEvent {
+            start_lsn: PgLsn::from(0u64),
+            commit_lsn: PgLsn::from(0u64),
+            table_schema: make_table_schema(1, "public", "t"),
+        })];
+        store.write_events(events).await.unwrap();
+    }
+
+    #[test]
+    fn test_synced() {
+        let store = BTreeMapReplicator::new();
+        // Just verify synced() returns a valid notified future
+        let _notified = store.synced();
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_insert_update_delete_no_sink() {
+        use etl::types::{
+            BeginEvent, CommitEvent, DeleteEvent, Event, InsertEvent,
+            UpdateEvent,
+        };
+
+        let store = BTreeMapReplicator::new();
+        let tid = make_table_id(1);
+        let events = vec![
+            Event::Begin(BeginEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                timestamp: 0,
+                xid: 1,
+            }),
+            Event::Insert(InsertEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                table_row: etl::types::TableRow { values: vec![] },
+            }),
+            Event::Update(UpdateEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                table_row: etl::types::TableRow { values: vec![] },
+                old_table_row: None,
+            }),
+            Event::Delete(DeleteEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                old_table_row: None,
+            }),
+            Event::Commit(CommitEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                flags: 0,
+                end_lsn: 300u64,
+                timestamp: 0,
+            }),
+        ];
+        store.write_events(events).await.unwrap();
+    }
+
+    fn make_row(key: &str) -> etl::types::TableRow {
+        etl::types::TableRow {
+            values: vec![etl::types::Cell::String(key.to_string())],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_with_sink() {
+        use etl::types::{
+            BeginEvent, CommitEvent, DeleteEvent, Event, InsertEvent,
+            UpdateEvent,
+        };
+
+        let store = BTreeMapReplicator::new();
+        let replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema_with_columns(1, "public", "test_table");
+        store.store_table_schema(schema).await.unwrap();
+
+        let tid = make_table_id(1);
+        let events = vec![
+            Event::Begin(BeginEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                timestamp: 0,
+                xid: 1,
+            }),
+            Event::Insert(InsertEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                table_row: make_row("insert_key"),
+            }),
+            Event::Update(UpdateEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                table_row: make_row("updated_key"),
+                old_table_row: Some((true, make_row("insert_key"))),
+            }),
+            Event::Delete(DeleteEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                old_table_row: Some((true, make_row("updated_key"))),
+            }),
+            Event::Commit(CommitEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                flags: 0,
+                end_lsn: 300u64,
+                timestamp: 0,
+            }),
+        ];
+        store.write_events(events).await.unwrap();
+
+        // After commit, the delete should have been applied:
+        // insert_key was inserted, then updated to updated_key, then deleted
+        assert!(replica.get(("insert_key".to_string(),)).is_none());
+        assert!(replica.get(("updated_key".to_string(),)).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_with_sink_insert_only() {
+        use etl::types::{BeginEvent, CommitEvent, Event, InsertEvent};
+
+        let store = BTreeMapReplicator::new();
+        let replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema_with_columns(1, "public", "test_table");
+        store.store_table_schema(schema).await.unwrap();
+
+        let tid = make_table_id(1);
+        let events = vec![
+            Event::Begin(BeginEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                timestamp: 0,
+                xid: 1,
+            }),
+            Event::Insert(InsertEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                table_row: make_row("hello"),
+            }),
+            Event::Commit(CommitEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                flags: 0,
+                end_lsn: 300u64,
+                timestamp: 0,
+            }),
+        ];
+        store.write_events(events).await.unwrap();
+
+        // After commit, the insert should be visible
+        let row = replica.get(("hello".to_string(),));
+        assert!(row.is_some());
+        assert_eq!(row.unwrap().key, "hello");
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_table_rows_with_sink() {
+        let store = BTreeMapReplicator::new();
+        let replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema_with_columns(1, "public", "test_table");
+        store.store_table_schema(schema).await.unwrap();
+
+        let tid = make_table_id(1);
+        store
+            .write_table_rows(tid, vec![make_row("row1"), make_row("row2")])
+            .await
+            .unwrap();
+
+        assert!(replica.get(("row1".to_string(),)).is_some());
+        assert!(replica.get(("row2".to_string(),)).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_destination_truncate_with_sink() {
+        let store = BTreeMapReplicator::new();
+        let replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema_with_columns(1, "public", "test_table");
+        store.store_table_schema(schema).await.unwrap();
+
+        let tid = make_table_id(1);
+        store
+            .write_table_rows(tid, vec![make_row("row1")])
+            .await
+            .unwrap();
+        assert!(replica.get(("row1".to_string(),)).is_some());
+
+        store.truncate_table(tid).await.unwrap();
+        assert!(replica.get(("row1".to_string(),)).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_empty_commit_with_sink() {
+        use etl::types::{BeginEvent, CommitEvent, Event};
+
+        let store = BTreeMapReplicator::new();
+        let _replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema_with_columns(1, "public", "test_table");
+        store.store_table_schema(schema).await.unwrap();
+
+        // Begin and Commit with no data events: exercises the empty txn_clog
+        // path in sink.commit()
+        let events = vec![
+            Event::Begin(BeginEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                timestamp: 0,
+                xid: 1,
+            }),
+            Event::Commit(CommitEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                flags: 0,
+                end_lsn: 300u64,
+                timestamp: 0,
+            }),
+        ];
+        store.write_events(events).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_truncate_with_sink() {
+        use etl::types::{Event, TruncateEvent};
+
+        let store = BTreeMapReplicator::new();
+        let replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema_with_columns(1, "public", "test_table");
+        store.store_table_schema(schema).await.unwrap();
+
+        let tid = make_table_id(1);
+        // First add some data
+        store.write_table_rows(tid, vec![make_row("x")]).await.unwrap();
+        assert!(replica.get(("x".to_string(),)).is_some());
+
+        // Now truncate via event
+        let events = vec![Event::Truncate(TruncateEvent {
+            start_lsn: PgLsn::from(0u64),
+            commit_lsn: PgLsn::from(0u64),
+            options: 0,
+            rel_ids: vec![1], // table_id oid
+        })];
+        store.write_events(events).await.unwrap();
+        assert!(replica.get(("x".to_string(),)).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_update_without_old_row() {
+        use etl::types::{BeginEvent, CommitEvent, Event, InsertEvent, UpdateEvent};
+
+        let store = BTreeMapReplicator::new();
+        let replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema_with_columns(1, "public", "test_table");
+        store.store_table_schema(schema).await.unwrap();
+
+        let tid = make_table_id(1);
+        let events = vec![
+            Event::Begin(BeginEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                timestamp: 0,
+                xid: 1,
+            }),
+            Event::Insert(InsertEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                table_row: make_row("key1"),
+            }),
+            // Update without old_table_row (no key change)
+            Event::Update(UpdateEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                table_row: make_row("key1"),
+                old_table_row: None,
+            }),
+            Event::Commit(CommitEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                flags: 0,
+                end_lsn: 300u64,
+                timestamp: 0,
+            }),
+        ];
+        store.write_events(events).await.unwrap();
+        assert!(replica.get(("key1".to_string(),)).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_delete_without_old_row() {
+        use etl::types::{BeginEvent, CommitEvent, DeleteEvent, Event};
+
+        let store = BTreeMapReplicator::new();
+        let _replica = store.add_replica::<TestRow, 1>("test_table");
+        let schema = make_table_schema_with_columns(1, "public", "test_table");
+        store.store_table_schema(schema).await.unwrap();
+
+        let tid = make_table_id(1);
+        // Delete without old_table_row should be a no-op
+        let events = vec![
+            Event::Begin(BeginEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                timestamp: 0,
+                xid: 1,
+            }),
+            Event::Delete(DeleteEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                table_id: tid,
+                old_table_row: None,
+            }),
+            Event::Commit(CommitEvent {
+                start_lsn: PgLsn::from(100u64),
+                commit_lsn: PgLsn::from(200u64),
+                flags: 0,
+                end_lsn: 300u64,
+                timestamp: 0,
+            }),
+        ];
+        store.write_events(events).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_destination_write_events_truncate() {
+        use etl::types::{Event, TruncateEvent};
+
+        let store = BTreeMapReplicator::new();
+        let events = vec![Event::Truncate(TruncateEvent {
+            start_lsn: PgLsn::from(0u64),
+            commit_lsn: PgLsn::from(0u64),
+            options: 0,
+            rel_ids: vec![999],
+        })];
+        // Should be fine even without sinks
+        store.write_events(events).await.unwrap();
+    }
+}
