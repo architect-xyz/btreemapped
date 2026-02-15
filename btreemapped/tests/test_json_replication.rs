@@ -6,6 +6,7 @@ use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use tokio_util::sync::CancellationToken;
 use utils::{create_postgres_client, setup_postgres_container};
 
 mod utils;
@@ -104,12 +105,14 @@ async fn test_json_replication() -> Result<()> {
     // Create replicator and replica
     let replicator = BTreeMapReplicator::new();
     let replica = replicator.add_replica::<JsonRecord, 1>("json_records");
+    let cancel = CancellationToken::new();
 
     // Start replication task
     let replication_handle = tokio::spawn({
         let config = pipeline_config(host, port);
+        let cancel = cancel.clone();
         async move {
-            if let Err(e) = replicator.run(config, None).await {
+            if let Err(e) = replicator.run(config, Some(cancel)).await {
                 eprintln!("replication task failed: {:?}", e);
             }
         }
@@ -173,8 +176,9 @@ async fn test_json_replication() -> Result<()> {
         assert!(replica.get((1i64,)).is_some(), "Record with id 1 should still exist");
     }
 
-    // Clean up
-    replication_handle.abort();
+    // Clean up: graceful shutdown so llvm-cov can flush coverage data
+    cancel.cancel();
+    let _ = replication_handle.await;
 
     Ok(())
 }
