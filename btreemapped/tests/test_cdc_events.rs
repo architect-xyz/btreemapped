@@ -1,6 +1,6 @@
 use anyhow::Result;
 use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1};
-use etl::config::{
+use btreemapped::config::{
     BatchConfig, PgConnectionConfig, PipelineConfig, TcpKeepaliveConfig, TlsConfig,
 };
 use tokio_util::sync::CancellationToken;
