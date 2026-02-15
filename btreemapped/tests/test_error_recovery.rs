@@ -41,10 +41,10 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
 /// 1. Main pipeline connection — for CDC streaming (apply worker)
 /// 2. Table sync worker connection — for initial COPY of table data
 ///
-/// By inserting enough data that COPY takes several seconds, we can
-/// reliably catch and kill the table sync worker's connection. The worker
-/// gets SourceDatabaseShutdown, triggers TimedRetry, calls
-/// rollback_table_replication_state, then retries and succeeds.
+/// We insert enough data that the COPY takes a few seconds, giving us
+/// a wide window to detect and kill the table sync worker's walsender.
+/// We poll pg_stat_activity for a second walsender PID, kill it, then
+/// poll for the pipeline to recover and complete the sync.
 #[tokio::test]
 async fn test_rollback_on_connection_kill() -> Result<()> {
     let (_container, port) = setup_postgres_container().await?;
@@ -69,8 +69,8 @@ async fn test_rollback_on_connection_kill() -> Result<()> {
         )
         .await?;
 
-    // Insert enough data that the table sync COPY takes several seconds,
-    // giving us time to catch and kill the connection.
+    // Insert enough data that the table sync COPY takes a few seconds,
+    // giving us a wide window to detect the second walsender.
     client
         .batch_execute(
             "INSERT INTO recovery_records (id, data)
@@ -96,52 +96,55 @@ async fn test_rollback_on_connection_kill() -> Result<()> {
 
     // Track the first walsender PID (main pipeline connection).
     // Then wait for a SECOND walsender to appear (table sync worker).
+    let monitor = create_postgres_client(host, port).await?;
     let mut main_pid: Option<i32> = None;
     let mut killed = false;
 
-    for _i in 0..200 {
-        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    for _ in 0..400 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        if let Ok(monitor) = create_postgres_client(host, port).await {
-            if let Ok(rows) = monitor
-                .query(
-                    "SELECT pid
-                     FROM pg_stat_activity
-                     WHERE datname = 'testdb'
-                       AND pid != pg_backend_pid()
-                       AND backend_type = 'walsender'",
-                    &[],
-                )
-                .await
-            {
-                let pids: Vec<i32> = rows.iter().map(|r| r.get(0)).collect();
+        let rows = monitor
+            .query(
+                "SELECT pid
+                 FROM pg_stat_activity
+                 WHERE datname = 'testdb'
+                   AND pid != pg_backend_pid()
+                   AND backend_type = 'walsender'",
+                &[],
+            )
+            .await?;
 
-                if main_pid.is_none() && !pids.is_empty() {
-                    main_pid = Some(pids[0]);
-                }
+        let pids: Vec<i32> = rows.iter().map(|r| r.get(0)).collect();
 
-                if let Some(mpid) = main_pid {
-                    for &pid in &pids {
-                        if pid != mpid {
-                            monitor
-                                .execute("SELECT pg_terminate_backend($1)", &[&pid])
-                                .await?;
-                            killed = true;
-                        }
-                    }
-                }
+        if main_pid.is_none() && !pids.is_empty() {
+            main_pid = Some(pids[0]);
+        }
 
-                if killed {
-                    break;
+        if let Some(mpid) = main_pid {
+            for &pid in &pids {
+                if pid != mpid {
+                    monitor
+                        .execute("SELECT pg_terminate_backend($1)", &[&pid])
+                        .await?;
+                    killed = true;
                 }
             }
+        }
+
+        if killed {
+            break;
         }
     }
 
     assert!(killed, "should have found and killed a table sync worker connection");
 
-    // Wait for pipeline to recover (retry delay + re-COPY 200K rows)
-    tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+    // Poll until all rows are synced (retry delay + re-COPY).
+    for _ in 0..200 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        if replica.read().len() == 200_000 {
+            break;
+        }
+    }
 
     assert_eq!(
         replica.read().len(),
