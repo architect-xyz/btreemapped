@@ -194,8 +194,9 @@ mod tests {
         assert_eq!(cell, Cell::Bool(true));
 
         // String
-        let cell: Cell =
-            etl::types::Cell::String("hello".to_string()).try_into().unwrap();
+        let cell: Cell = etl::types::Cell::String("hello".to_string())
+            .try_into()
+            .unwrap();
         assert_eq!(cell, Cell::String("hello".to_string()));
 
         // I16
@@ -233,8 +234,7 @@ mod tests {
         assert_eq!(cell, Cell::Json(json));
 
         // Bytes
-        let cell: Cell =
-            etl::types::Cell::Bytes(vec![1, 2, 3]).try_into().unwrap();
+        let cell: Cell = etl::types::Cell::Bytes(vec![1, 2, 3]).try_into().unwrap();
         assert_eq!(cell, Cell::Bytes(vec![1, 2, 3]));
     }
 
@@ -256,16 +256,16 @@ mod tests {
         assert_eq!(cell, Cell::Timestamp(ts));
 
         let tstz: DateTime<Utc> = "2024-03-15T12:30:45Z".parse().unwrap();
-        let cell: Cell =
-            etl::types::Cell::TimestampTz(tstz).try_into().unwrap();
+        let cell: Cell = etl::types::Cell::TimestampTz(tstz).try_into().unwrap();
         assert_eq!(cell, Cell::TimestampTz(tstz));
     }
 
     #[test]
     fn test_cell_try_from_etl_cell_numeric() {
         let numeric = PgNumeric::NaN;
-        let cell: Cell =
-            etl::types::Cell::Numeric(numeric.clone()).try_into().unwrap();
+        let cell: Cell = etl::types::Cell::Numeric(numeric.clone())
+            .try_into()
+            .unwrap();
         assert_eq!(cell, Cell::Numeric(numeric));
     }
 
@@ -292,40 +292,46 @@ mod tests {
                 .unwrap();
         assert_eq!(arr, ArrayCell::String(vec![Some("a".to_string()), None]));
 
-        let arr: ArrayCell =
-            etl::types::ArrayCell::I16(vec![Some(1)]).try_into().unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::I16(vec![Some(1)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::I16(vec![Some(1)]));
 
-        let arr: ArrayCell =
-            etl::types::ArrayCell::U32(vec![Some(42)]).try_into().unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::U32(vec![Some(42)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::U32(vec![Some(42)]));
 
-        let arr: ArrayCell =
-            etl::types::ArrayCell::I64(vec![Some(999)]).try_into().unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::I64(vec![Some(999)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::I64(vec![Some(999)]));
 
-        let arr: ArrayCell =
-            etl::types::ArrayCell::F32(vec![Some(1.0)]).try_into().unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::F32(vec![Some(1.0)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::F32(vec![Some(1.0)]));
 
-        let arr: ArrayCell =
-            etl::types::ArrayCell::F64(vec![Some(2.0)]).try_into().unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::F64(vec![Some(2.0)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::F64(vec![Some(2.0)]));
 
-        let arr: ArrayCell =
-            etl::types::ArrayCell::Numeric(vec![Some(PgNumeric::NaN)])
-                .try_into()
-                .unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::Numeric(vec![Some(PgNumeric::NaN)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::Numeric(vec![Some(PgNumeric::NaN)]));
 
         let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-        let arr: ArrayCell =
-            etl::types::ArrayCell::Date(vec![Some(date)]).try_into().unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::Date(vec![Some(date)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::Date(vec![Some(date)]));
 
         let time = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
-        let arr: ArrayCell =
-            etl::types::ArrayCell::Time(vec![Some(time)]).try_into().unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::Time(vec![Some(time)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::Time(vec![Some(time)]));
 
         let ts = NaiveDate::from_ymd_opt(2024, 1, 1)
@@ -338,28 +344,26 @@ mod tests {
         assert_eq!(arr, ArrayCell::Timestamp(vec![Some(ts)]));
 
         let tstz: DateTime<Utc> = "2024-01-01T12:00:00Z".parse().unwrap();
-        let arr: ArrayCell =
-            etl::types::ArrayCell::TimestampTz(vec![Some(tstz)])
-                .try_into()
-                .unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::TimestampTz(vec![Some(tstz)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::TimestampTz(vec![Some(tstz)]));
 
         let u = Uuid::new_v4();
-        let arr: ArrayCell =
-            etl::types::ArrayCell::Uuid(vec![Some(u)]).try_into().unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::Uuid(vec![Some(u)])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::Uuid(vec![Some(u)]));
 
         let json = serde_json::json!({"key": "value"});
-        let arr: ArrayCell =
-            etl::types::ArrayCell::Json(vec![Some(json.clone())])
-                .try_into()
-                .unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::Json(vec![Some(json.clone())])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::Json(vec![Some(json)]));
 
-        let arr: ArrayCell =
-            etl::types::ArrayCell::Bytes(vec![Some(vec![1, 2])])
-                .try_into()
-                .unwrap();
+        let arr: ArrayCell = etl::types::ArrayCell::Bytes(vec![Some(vec![1, 2])])
+            .try_into()
+            .unwrap();
         assert_eq!(arr, ArrayCell::Bytes(vec![Some(vec![1, 2])]));
     }
 
@@ -383,8 +387,7 @@ mod tests {
         let opt: Option<bool> = Cell::Bool(true).try_into().unwrap();
         assert_eq!(opt, Some(true));
 
-        let opt: Option<String> =
-            Cell::String("test".to_string()).try_into().unwrap();
+        let opt: Option<String> = Cell::String("test".to_string()).try_into().unwrap();
         assert_eq!(opt, Some("test".to_string()));
 
         let opt: Option<i16> = Cell::I16(5).try_into().unwrap();
@@ -414,8 +417,7 @@ mod tests {
 
     #[test]
     fn test_vec_option_from_cell_array() {
-        let cell =
-            Cell::Array(ArrayCell::I32(vec![Some(1), None, Some(3)]));
+        let cell = Cell::Array(ArrayCell::I32(vec![Some(1), None, Some(3)]));
         let vec: Vec<Option<i32>> = cell.try_into().unwrap();
         assert_eq!(vec, vec![Some(1), None, Some(3)]);
     }
@@ -445,8 +447,7 @@ mod tests {
                 scale: 2,
                 digits: vec![1234],
             };
-            let dec: rust_decimal::Decimal =
-                Cell::Numeric(numeric).try_into().unwrap();
+            let dec: rust_decimal::Decimal = Cell::Numeric(numeric).try_into().unwrap();
             assert!(dec > rust_decimal::Decimal::ZERO);
         }
 
@@ -461,8 +462,7 @@ mod tests {
 
         #[test]
         fn test_option_decimal_from_cell_null() {
-            let opt: Option<rust_decimal::Decimal> =
-                Cell::Null.try_into().unwrap();
+            let opt: Option<rust_decimal::Decimal> = Cell::Null.try_into().unwrap();
             assert_eq!(opt, None);
         }
 

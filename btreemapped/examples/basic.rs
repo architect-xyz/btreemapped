@@ -83,7 +83,10 @@ fn pg_config() -> PgConnectionConfig {
         name: "postgres".to_string(), // database name
         username: "postgres".to_string(),
         password: Some("postgres".to_string().into()),
-        tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+        tls: TlsConfig {
+            trusted_root_certs: "".to_string(),
+            enabled: false,
+        },
         keepalive: None,
     }
 }
@@ -95,7 +98,10 @@ fn pipeline_config() -> PipelineConfig {
         // this determines which tables are replicated to you
         publication_name: "foobars_pub".to_string(),
         pg_connection: pg_config(),
-        batch: BatchConfig { max_size: 100, max_fill_ms: 1000 },
+        batch: BatchConfig {
+            max_size: 100,
+            max_fill_ms: 1000,
+        },
         table_error_retry_delay_ms: 10000,
         table_error_retry_max_attempts: 5,
         max_table_sync_workers: 4,

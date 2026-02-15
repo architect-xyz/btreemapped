@@ -75,7 +75,10 @@ impl BTreeMapReplicator {
             table_mappings: HashMap::new(),
         };
 
-        Self { inner: Arc::new(Mutex::new(inner)), synced: Arc::new(Notify::new()) }
+        Self {
+            inner: Arc::new(Mutex::new(inner)),
+            synced: Arc::new(Notify::new()),
+        }
     }
 
     pub fn add_replica<T: BTreeMapped<N>, const N: usize>(
@@ -84,7 +87,9 @@ impl BTreeMapReplicator {
     ) -> BTreeMapReplica<T, N> {
         let mut inner = self.inner.lock();
         let replica = BTreeMapReplica::new();
-        inner.pending_sinks.insert(table_name.to_string(), Box::new(replica.clone()));
+        inner
+            .pending_sinks
+            .insert(table_name.to_string(), Box::new(replica.clone()));
         replica
     }
 
@@ -106,14 +111,13 @@ impl BTreeMapReplicator {
         let pipeline_fut = pipeline.wait().fuse();
         pin_mut!(pipeline_fut);
 
-        let cancellation_token =
-            cancellation_token.unwrap_or_else(|| CancellationToken::new());
+        let cancellation_token = cancellation_token.unwrap_or_default();
         let cancellation = cancellation_token.cancelled().fuse();
         pin_mut!(cancellation);
 
         select_biased! {
             _ = cancellation => {
-                if let Err(_) = shutdown_tx.shutdown() {
+                if shutdown_tx.shutdown().is_err() {
                     return Err(anyhow::anyhow!("failed to shutdown pipeline"));
                 }
             }
@@ -173,21 +177,20 @@ impl StateStore for BTreeMapReplicator {
             inner
                 .table_state_history
                 .entry(table_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(current_state);
         }
 
         inner.table_replication_states.insert(table_id, state);
 
-        if !inner.fully_synced {
-            if inner
+        if !inner.fully_synced
+            && inner
                 .table_replication_states
                 .values()
                 .all(|state| matches!(state, TableReplicationPhase::SyncDone { .. }))
-            {
-                inner.fully_synced = true;
-                self.synced.notify_waiters();
-            }
+        {
+            inner.fully_synced = true;
+            self.synced.notify_waiters();
         }
 
         Ok(())
@@ -212,7 +215,9 @@ impl StateStore for BTreeMapReplicator {
             })?;
 
         // Update the current state to the previous state
-        inner.table_replication_states.insert(table_id, previous_state.clone());
+        inner
+            .table_replication_states
+            .insert(table_id, previous_state.clone());
 
         Ok(previous_state)
     }
@@ -244,7 +249,9 @@ impl StateStore for BTreeMapReplicator {
         destination_table_id: String,
     ) -> EtlResult<()> {
         let mut inner = self.inner.lock();
-        inner.table_mappings.insert(source_table_id, destination_table_id);
+        inner
+            .table_mappings
+            .insert(source_table_id, destination_table_id);
 
         Ok(())
     }
@@ -439,5 +446,5 @@ pub(crate) fn normalized_table_name(table_name: &TableName) -> String {
     }
 }
 
-static SCHEMA_CHANGE_NOT_ALLOWED_ERROR: &'static str =
+static SCHEMA_CHANGE_NOT_ALLOWED_ERROR: &str =
     "btreemapped destination does not tolerate online schema changes or table renames";

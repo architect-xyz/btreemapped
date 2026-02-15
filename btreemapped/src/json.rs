@@ -63,7 +63,10 @@ where
     }
 
     fn accepts(ty: &postgres_types::Type) -> bool {
-        matches!(*ty, postgres_types::Type::JSON | postgres_types::Type::JSONB)
+        matches!(
+            *ty,
+            postgres_types::Type::JSON | postgres_types::Type::JSONB
+        )
     }
 
     postgres_types::to_sql_checked!();
@@ -112,8 +115,7 @@ mod tests {
         map.insert("key".to_string(), 42);
         let pj = PgJson(map);
         let json = serde_json::to_string(&pj).unwrap();
-        let pj2: PgJson<BTreeMap<String, i32>> =
-            serde_json::from_str(&json).unwrap();
+        let pj2: PgJson<BTreeMap<String, i32>> = serde_json::from_str(&json).unwrap();
         assert_eq!(pj, pj2);
     }
 

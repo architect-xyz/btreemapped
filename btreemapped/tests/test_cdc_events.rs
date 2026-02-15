@@ -43,10 +43,16 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
             name: "testdb".to_string(),
             username: "postgres".to_string(),
             password: Some("postgres".to_string().into()),
-            tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
+            tls: TlsConfig {
+                trusted_root_certs: "".to_string(),
+                enabled: false,
+            },
             keepalive: None,
         },
-        batch: BatchConfig { max_size: 100, max_fill_ms: 100 },
+        batch: BatchConfig {
+            max_size: 100,
+            max_fill_ms: 100,
+        },
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
@@ -104,8 +110,14 @@ async fn test_cdc_insert_and_truncate() -> Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    assert!(replica.get((1i64,)).is_some(), "CDC INSERT: record 1 should exist");
-    assert!(replica.get((2i64,)).is_some(), "CDC INSERT: record 2 should exist");
+    assert!(
+        replica.get((1i64,)).is_some(),
+        "CDC INSERT: record 1 should exist"
+    );
+    assert!(
+        replica.get((2i64,)).is_some(),
+        "CDC INSERT: record 2 should exist"
+    );
     assert_eq!(replica.get((1i64,)).unwrap().name.as_deref(), Some("Alice"));
 
     // TRUNCATE via CDC
@@ -116,8 +128,14 @@ async fn test_cdc_insert_and_truncate() -> Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    assert!(replica.get((1i64,)).is_none(), "TRUNCATE: record 1 should be gone");
-    assert!(replica.get((2i64,)).is_none(), "TRUNCATE: record 2 should be gone");
+    assert!(
+        replica.get((1i64,)).is_none(),
+        "TRUNCATE: record 1 should be gone"
+    );
+    assert!(
+        replica.get((2i64,)).is_none(),
+        "TRUNCATE: record 2 should be gone"
+    );
 
     cancel.cancel();
     let _ = replication_handle.await;

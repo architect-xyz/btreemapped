@@ -1,3 +1,5 @@
+nightly := "nightly-2025-12-07"
+
 # List available recipes
 default:
     @just --list
@@ -15,3 +17,16 @@ example:
     docker compose down postgres
     docker compose up -d postgres
     cargo run --example basic -p btreemapped
+
+# Auto-fix clippy warnings
+fix:
+    cargo clippy --all-features --workspace --fix --allow-dirty -- -D warnings
+
+# Format all Rust and TOML files
+format:
+    cargo +{{nightly}} fmt --all
+    taplo fmt
+
+# Run clippy lints
+lint:
+    cargo clippy --all-features --workspace -- -D warnings

@@ -25,15 +25,17 @@ impl Parse for LIndexType {
                     None
                 }
             })
-            .map(|ident| ident.clone())
+            .cloned()
             .collect();
         Ok(LIndexType { ident, args })
     }
 }
 
 pub fn impl_for_range(input: TokenStream) -> TokenStream {
-    let LIndexType { ident: lindex_ident, args: lindex_args } =
-        parse_macro_input!(input as LIndexType);
+    let LIndexType {
+        ident: lindex_ident,
+        args: lindex_args,
+    } = parse_macro_input!(input as LIndexType);
     // the original LIndexN<..> type
     let lindex_ty = quote! { #lindex_ident<#(#lindex_args),*> };
     let mut range_methods = vec![];
@@ -49,6 +51,7 @@ pub fn impl_for_range(input: TokenStream) -> TokenStream {
         //   - range over i2,
         //   - open bounds on i3
         let mut fixed_params = vec![];
+        #[allow(clippy::needless_range_loop)]
         for j in 0..i {
             let param = format_ident!("x{}", j);
             let ty = lindex_args[j].clone();

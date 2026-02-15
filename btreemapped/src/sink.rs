@@ -13,7 +13,11 @@ pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
 
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
     pub fn new(replica: BTreeMapReplica<T, N>, table_schema: Arc<TableSchema>) -> Self {
-        Self { replica, txn_clog: vec![], table_schema }
+        Self {
+            replica,
+            txn_clog: vec![],
+            table_schema,
+        }
     }
 }
 
@@ -93,14 +97,13 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
             Some((replica.seqid, replica.seqno))
         } {
             let _ = self.replica.sequence.send_replace((seqid, seqno));
-            if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
+            // nobody listening, fine
+            let _ = self.replica.updates.send(Arc::new(BTreeUpdate {
                 seqid,
                 seqno,
                 snapshot: None,
                 updates,
-            })) {
-                // nobody listening, fine
-            }
+            }));
         }
     }
 
@@ -110,14 +113,13 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
         replica.seqno += 1;
         let (seqid, seqno) = (replica.seqid, replica.seqno);
         let _ = self.replica.sequence.send_replace((seqid, seqno));
-        if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
+        // nobody listening, fine
+        let _ = self.replica.updates.send(Arc::new(BTreeUpdate {
             seqid,
             seqno,
             snapshot: Some(vec![]),
             updates: vec![],
-        })) {
-            // nobody listening, fine
-        }
+        }));
     }
 
     fn write_table_rows(&self, rows: Vec<TableRow>) -> EtlResult<()> {
@@ -137,14 +139,13 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
             (replica.seqid, replica.seqno)
         };
         let _ = self.replica.sequence.send_replace((seqid, seqno));
-        if let Err(_) = self.replica.updates.send(Arc::new(BTreeUpdate {
+        // nobody listening, fine
+        let _ = self.replica.updates.send(Arc::new(BTreeUpdate {
             seqid,
             seqno,
             snapshot: None,
             updates,
-        })) {
-            // nobody listening, fine
-        }
+        }));
         EtlResult::Ok(())
     }
 

@@ -26,12 +26,12 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 derive_more = { workspace = true }
 env_logger = { workspace = true, optional = true }
+etl = { workspace = true }
+etl-postgres = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 paste = { workspace = true }
-etl = { workspace = true }
-etl-postgres = { workspace = true }
 postgres-types = { workspace = true, features = ["with-serde_json-1"] }
 rand = { workspace = true }
 rust_decimal = { workspace = true, optional = true, features = ["maths"] }
@@ -47,8 +47,8 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 postgres-types = { workspace = true, features = [
-    "with-chrono-0_4",
-    "with-serde_json-1",
+  "with-chrono-0_4",
+  "with-serde_json-1",
 ] }
 rust_decimal = { workspace = true }
 rust_decimal_macros = { workspace = true }
