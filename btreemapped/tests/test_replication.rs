@@ -5,6 +5,7 @@ use btreemapped::{replicator::BTreeMapReplicator, BTreeMapped, LIndex1, PgSchema
 use etl::config::{BatchConfig, PgConnectionConfig, PipelineConfig, TlsConfig};
 use postgres_types::Type;
 use rust_decimal::Decimal;
+use tokio_util::sync::CancellationToken;
 use utils::{create_postgres_client, setup_postgres_container};
 
 mod utils;
@@ -101,12 +102,14 @@ async fn test_basic_replication() -> Result<()> {
     // Create replicator and replica
     let replicator = BTreeMapReplicator::new();
     let replica = replicator.add_replica::<TestRecord, 1>("test_records");
+    let cancel = CancellationToken::new();
 
     // Start replication task
     let replication_handle = tokio::spawn({
         let config = pipeline_config(host, port);
+        let cancel = cancel.clone();
         async move {
-            if let Err(e) = replicator.run(config, None).await {
+            if let Err(e) = replicator.run(config, Some(cancel)).await {
                 eprintln!("replication task failed: {:?}", e);
             }
         }
@@ -163,8 +166,8 @@ async fn test_basic_replication() -> Result<()> {
         assert!(replica.get((1i64,)).is_some(), "Record with id 1 should still exist");
     }
 
-    // Clean up
-    replication_handle.abort();
+    cancel.cancel();
+    let _ = replication_handle.await;
 
     Ok(())
 }

@@ -69,6 +69,110 @@ where
     postgres_types::to_sql_checked!();
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deref() {
+        let pj = PgJson(42);
+        assert_eq!(*pj, 42);
+    }
+
+    #[test]
+    fn test_deref_mut() {
+        let mut pj = PgJson(42);
+        *pj = 100;
+        assert_eq!(pj.0, 100);
+    }
+
+    #[test]
+    fn test_display() {
+        let pj = PgJson("hello".to_string());
+        assert_eq!(format!("{}", pj), "hello");
+    }
+
+    #[test]
+    fn test_serialize() {
+        let pj = PgJson(vec![1, 2, 3]);
+        let json = serde_json::to_string(&pj).unwrap();
+        assert_eq!(json, "[1,2,3]");
+    }
+
+    #[test]
+    fn test_deserialize() {
+        let pj: PgJson<Vec<i32>> = serde_json::from_str("[1,2,3]").unwrap();
+        assert_eq!(pj.0, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        use std::collections::BTreeMap;
+        let mut map = BTreeMap::new();
+        map.insert("key".to_string(), 42);
+        let pj = PgJson(map);
+        let json = serde_json::to_string(&pj).unwrap();
+        let pj2: PgJson<BTreeMap<String, i32>> =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(pj, pj2);
+    }
+
+    #[test]
+    fn test_to_sql_json() {
+        use bytes::BytesMut;
+        use postgres_types::ToSql;
+
+        let pj = PgJson(serde_json::json!({"key": "value"}));
+        let mut buf = BytesMut::new();
+        pj.to_sql(&postgres_types::Type::JSON, &mut buf).unwrap();
+        assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn test_to_sql_jsonb() {
+        use bytes::BytesMut;
+        use postgres_types::ToSql;
+
+        let pj = PgJson(serde_json::json!({"key": "value"}));
+        let mut buf = BytesMut::new();
+        pj.to_sql(&postgres_types::Type::JSONB, &mut buf).unwrap();
+        assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn test_accepts() {
+        use postgres_types::ToSql;
+        assert!(PgJson::<serde_json::Value>::accepts(
+            &postgres_types::Type::JSON
+        ));
+        assert!(PgJson::<serde_json::Value>::accepts(
+            &postgres_types::Type::JSONB
+        ));
+        assert!(!PgJson::<serde_json::Value>::accepts(
+            &postgres_types::Type::TEXT
+        ));
+    }
+
+    #[test]
+    fn test_eq_ord() {
+        let a = PgJson(1);
+        let b = PgJson(2);
+        let c = PgJson(1);
+        assert_eq!(a, c);
+        assert_ne!(a, b);
+        assert!(a < b);
+    }
+
+    #[test]
+    fn test_clone_debug() {
+        let pj = PgJson(42);
+        let cloned = pj.clone();
+        assert_eq!(pj, cloned);
+        let debug = format!("{:?}", pj);
+        assert!(debug.contains("42"));
+    }
+}
+
 #[cfg(feature = "sqlx")]
 impl<'r, T> sqlx::Decode<'r, sqlx::Postgres> for PgJson<T>
 where
