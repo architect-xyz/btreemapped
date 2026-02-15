@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.1](https://github.com/architect-xyz/btreemapped/compare/v0.5.0...v0.5.1) (2026-02-15)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * btreemapped_derive bumped from 0.4.1 to 0.5.0
+
 ## [0.5.0](https://github.com/architect-xyz/btreemapped/compare/v0.4.0...v0.5.0) (2026-02-15)
 
 
