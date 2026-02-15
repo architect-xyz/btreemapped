@@ -21,8 +21,8 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
             host: host.to_string(),
             port,
             name: "testdb".to_string(),
-            username: "postgres".to_string(),
-            password: Some("postgres".to_string().into()),
+            username: "repl_user".to_string(),
+            password: Some("repl_pass".to_string().into()),
             tls: TlsConfig { trusted_root_certs: "".to_string(), enabled: false },
             keepalive: None,
         },
@@ -41,10 +41,12 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
 /// 1. Main pipeline connection — for CDC streaming (apply worker)
 /// 2. Table sync worker connection — for initial COPY of table data
 ///
-/// We insert enough data that the COPY takes a few seconds, giving us
-/// a wide window to detect and kill the table sync worker's walsender.
-/// We poll pg_stat_activity for a second walsender PID, kill it, then
-/// poll for the pipeline to recover and complete the sync.
+/// We use a non-superuser replication role with a Row-Level Security
+/// policy that calls `pg_sleep()` on each row, making the COPY take a
+/// deterministic ~1 second (100 rows × 10ms). This gives a wide,
+/// hardware-independent window to detect and kill the table sync
+/// worker's walsender. Superusers bypass RLS, so the replicator must
+/// connect as a non-superuser for the policy to take effect.
 #[tokio::test]
 async fn test_rollback_on_connection_kill() -> Result<()> {
     let (_container, port) = setup_postgres_container().await?;
@@ -69,13 +71,23 @@ async fn test_rollback_on_connection_kill() -> Result<()> {
         )
         .await?;
 
-    // Insert enough data that the table sync COPY takes a few seconds,
-    // giving us a wide window to detect the second walsender.
     client
         .batch_execute(
             "INSERT INTO recovery_records (id, data)
-             SELECT g, repeat('x', 500)
-             FROM generate_series(1, 200000) g",
+             SELECT g, 'value'
+             FROM generate_series(1, 100) g",
+        )
+        .await?;
+
+    // Create a non-superuser replication role. Superusers bypass RLS,
+    // so we need a dedicated role for the pg_sleep policy to apply.
+    client
+        .batch_execute(
+            "CREATE ROLE repl_user WITH REPLICATION LOGIN PASSWORD 'repl_pass';
+             GRANT SELECT ON recovery_records TO repl_user;
+             ALTER TABLE recovery_records ENABLE ROW LEVEL SECURITY;
+             CREATE POLICY slow_copy ON recovery_records
+                 FOR SELECT USING (pg_sleep(0.01) IS NOT NULL)",
         )
         .await?;
     drop(client);
@@ -96,6 +108,8 @@ async fn test_rollback_on_connection_kill() -> Result<()> {
 
     // Track the first walsender PID (main pipeline connection).
     // Then wait for a SECOND walsender to appear (table sync worker).
+    // The RLS pg_sleep policy makes the COPY take ~1s, giving us a wide
+    // window regardless of hardware speed.
     let monitor = create_postgres_client(host, port).await?;
     let mut main_pid: Option<i32> = None;
     let mut killed = false;
@@ -138,17 +152,17 @@ async fn test_rollback_on_connection_kill() -> Result<()> {
 
     assert!(killed, "should have found and killed a table sync worker connection");
 
-    // Poll until all rows are synced (retry delay + re-COPY).
+    // Poll until all rows are synced (retry delay + re-COPY with pg_sleep).
     for _ in 0..200 {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        if replica.read().len() == 200_000 {
+        if replica.read().len() == 100 {
             break;
         }
     }
 
     assert_eq!(
         replica.read().len(),
-        200_000,
+        100,
         "all rows should be synced after recovery"
     );
 
