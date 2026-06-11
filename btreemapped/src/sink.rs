@@ -1,31 +1,32 @@
 use crate::{BTreeMapReplica, BTreeMapped, BTreeUpdate};
 use etl::{
     error::EtlResult,
-    types::{Event, TableRow, TableSchema},
+    types::{
+        ColumnSchema, Event, OldTableRow, ReplicatedTableSchema, TableRow,
+        UpdatedTableRow,
+    },
 };
 use std::sync::Arc;
 
 pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
     pub replica: BTreeMapReplica<T, N>,
     txn_clog: Vec<Result<T, T::Index>>,
-    table_schema: Arc<TableSchema>,
 }
 
 impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
-    pub fn new(replica: BTreeMapReplica<T, N>, table_schema: Arc<TableSchema>) -> Self {
+    pub fn new(replica: BTreeMapReplica<T, N>) -> Self {
         Self {
             replica,
             txn_clog: vec![],
-            table_schema,
         }
     }
 }
 
-fn parse_row<T: BTreeMapped<N>, const N: usize>(
-    schema: &TableSchema,
+fn parse_row<'a, T: BTreeMapped<N>, const N: usize>(
+    columns: impl Iterator<Item = &'a ColumnSchema>,
     row: TableRow,
 ) -> Option<T> {
-    match T::parse_row(schema, row) {
+    match T::parse_row(columns, row) {
         Ok(t) => Some(t),
         // TODO: we can probably return an error and propagate it now
         Err(_e) => {
@@ -36,11 +37,11 @@ fn parse_row<T: BTreeMapped<N>, const N: usize>(
     }
 }
 
-fn parse_row_index<T: BTreeMapped<N>, const N: usize>(
-    schema: &TableSchema,
+fn parse_row_index<'a, T: BTreeMapped<N>, const N: usize>(
+    columns: impl Iterator<Item = &'a ColumnSchema>,
     row: TableRow,
 ) -> Option<T::Index> {
-    match T::parse_row_index(schema, row) {
+    match T::parse_row_index(columns, row) {
         Ok(index) => Some(index),
         Err(_e) => {
             #[cfg(feature = "log")]
@@ -50,13 +51,28 @@ fn parse_row_index<T: BTreeMapped<N>, const N: usize>(
     }
 }
 
+/// Parse the index from an old-row image, using the appropriate column
+/// schemas for the image shape: full rows carry all replicated columns,
+/// key rows carry only the (dense) identity columns.
+fn parse_old_row_index<T: BTreeMapped<N>, const N: usize>(
+    schema: &ReplicatedTableSchema,
+    old_row: OldTableRow,
+) -> Option<T::Index> {
+    match old_row {
+        OldTableRow::Full(row) => parse_row_index::<T, N>(schema.column_schemas(), row),
+        OldTableRow::Key(row) => {
+            parse_row_index::<T, N>(schema.identity_column_schemas(), row)
+        }
+    }
+}
+
 pub(crate) trait ErasedBTreeMapReplica: Send {
-    fn to_sink(&self, table_schema: Arc<TableSchema>) -> Box<dyn ErasedBTreeMapSink>;
+    fn to_sink(&self) -> Box<dyn ErasedBTreeMapSink>;
 }
 
 impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapReplica for BTreeMapReplica<T, N> {
-    fn to_sink(&self, table_schema: Arc<TableSchema>) -> Box<dyn ErasedBTreeMapSink> {
-        Box::new(BTreeMapSink::new(self.clone(), table_schema))
+    fn to_sink(&self) -> Box<dyn ErasedBTreeMapSink> {
+        Box::new(BTreeMapSink::new(self.clone()))
     }
 }
 
@@ -68,7 +84,11 @@ pub(crate) trait ErasedBTreeMapSink: Send {
 
     fn truncate(&self);
 
-    fn write_table_rows(&self, rows: Vec<TableRow>) -> EtlResult<()>;
+    fn write_table_rows(
+        &self,
+        schema: &ReplicatedTableSchema,
+        rows: Vec<TableRow>,
+    ) -> EtlResult<()>;
 
     fn write_event(&mut self, events: Event) -> EtlResult<()>;
 }
@@ -122,14 +142,18 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
         }));
     }
 
-    fn write_table_rows(&self, rows: Vec<TableRow>) -> EtlResult<()> {
+    fn write_table_rows(
+        &self,
+        schema: &ReplicatedTableSchema,
+        rows: Vec<TableRow>,
+    ) -> EtlResult<()> {
         #[cfg(feature = "log")]
         log::trace!("write_table_rows: {} rows", rows.len());
         let mut updates = vec![];
         let (seqid, seqno) = {
             let mut replica = self.replica.write();
             for row in rows {
-                if let Some(t) = parse_row::<T, N>(&self.table_schema, row) {
+                if let Some(t) = parse_row::<T, N>(schema.column_schemas(), row) {
                     let index = t.index();
                     replica.insert(index.clone().into(), t.clone());
                     updates.push((index, Some(t)));
@@ -154,34 +178,55 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
             Event::Begin(..) => {}
             Event::Commit(..) => {}
             Event::Insert(insert) => {
-                if let Some(t) = parse_row::<T, N>(&self.table_schema, insert.table_row) {
+                let schema = &insert.replicated_table_schema;
+                if let Some(t) =
+                    parse_row::<T, N>(schema.column_schemas(), insert.table_row)
+                {
                     self.txn_clog.push(Ok(t));
                 }
             }
             Event::Update(update) => {
+                let schema = &update.replicated_table_schema;
                 let mut index = Ok(None);
-                if let Some((_, key)) = update.old_table_row {
-                    if let Some(i) = parse_row_index::<T, N>(&self.table_schema, key) {
+                if let Some(old_row) = update.old_table_row {
+                    if let Some(i) = parse_old_row_index::<T, N>(schema, old_row) {
                         index = Ok(Some(i));
                     } else {
                         index = Err(());
                     }
                 }
                 if let Ok(index) = index {
-                    if let Some(t) =
-                        parse_row::<T, N>(&self.table_schema, update.table_row)
-                    {
-                        if let Some(i) = index {
-                            self.txn_clog.push(Err(i));
+                    match update.updated_table_row {
+                        UpdatedTableRow::Full(row) => {
+                            if let Some(t) =
+                                parse_row::<T, N>(schema.column_schemas(), row)
+                            {
+                                if let Some(i) = index {
+                                    self.txn_clog.push(Err(i));
+                                }
+                                self.txn_clog.push(Ok(t));
+                            }
                         }
-                        self.txn_clog.push(Ok(t));
+                        UpdatedTableRow::Partial(_partial) => {
+                            // Postgres emitted UnchangedToast columns that etl
+                            // could not reconstruct from the old row image; we
+                            // can't merge partial rows into typed structs, so
+                            // skip the update (same policy as a parse failure).
+                            #[cfg(feature = "log")]
+                            log::error!(
+                                "skipping partial update for table {}: \
+                                 unchanged TOAST columns could not be reconstructed",
+                                schema.name()
+                            );
+                        }
                     }
                 }
             }
             Event::Delete(delete) => {
+                let schema = &delete.replicated_table_schema;
                 // CR alee: under what conditions is old_table_row not Some(..)?
-                if let Some((_, key)) = delete.old_table_row {
-                    if let Some(i) = parse_row_index::<T, N>(&self.table_schema, key) {
+                if let Some(old_row) = delete.old_table_row {
+                    if let Some(i) = parse_old_row_index::<T, N>(schema, old_row) {
                         self.txn_clog.push(Err(i));
                     }
                 }

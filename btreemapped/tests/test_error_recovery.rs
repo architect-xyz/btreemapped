@@ -24,6 +24,7 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
         publication_name: "recovery_pub".to_string(),
         pg_connection: PgConnectionConfig {
             host: host.to_string(),
+            hostaddr: None,
             port,
             name: "testdb".to_string(),
             username: "repl_user".to_string(),
@@ -35,13 +36,16 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
             keepalive: TcpKeepaliveConfig::default(),
         },
         batch: BatchConfig {
-            max_size: 100,
             max_fill_ms: 100,
+            ..Default::default()
         },
         table_error_retry_delay_ms: 500,
         table_error_retry_max_attempts: 5,
         max_table_sync_workers: 4,
         max_copy_connections_per_table: 1,
+        store_pg_connection: None,
+        memory_refresh_interval_ms: 100,
+        memory_backpressure: None,
         table_sync_copy: Default::default(),
         invalidated_slot_behavior: Default::default(),
     }
@@ -62,6 +66,9 @@ fn pipeline_config(host: &str, port: u16) -> PipelineConfig {
 /// connect as a non-superuser for the policy to take effect.
 #[tokio::test]
 async fn test_rollback_on_connection_kill() -> Result<()> {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
     let (_container, port) = setup_postgres_container().await?;
     let host = "localhost";
 
@@ -101,6 +108,28 @@ async fn test_rollback_on_connection_kill() -> Result<()> {
              ALTER TABLE recovery_records ENABLE ROW LEVEL SECURITY;
              CREATE POLICY slow_copy ON recovery_records
                  FOR SELECT USING (pg_sleep(0.01) IS NOT NULL)",
+        )
+        .await?;
+
+    // etl's source migrations install a DDL event trigger, which requires
+    // superuser; pre-run them as postgres so the pipeline running as
+    // repl_user only verifies them.
+    let superuser_config = {
+        let mut config = pipeline_config(host, port).pg_connection;
+        config.username = "postgres".to_string();
+        config.password = Some("postgres".to_string().into());
+        config
+    };
+    btreemapped::migrations::run_source_migrations(&superuser_config).await?;
+    client
+        .batch_execute(
+            // CREATE privileges because the pipeline's migration connection
+            // runs `CREATE SCHEMA IF NOT EXISTS etl` / `CREATE TABLE IF NOT
+            // EXISTS etl._sqlx_migrations` even when they already exist.
+            "GRANT CREATE ON DATABASE testdb TO repl_user;
+             GRANT USAGE, CREATE ON SCHEMA etl TO repl_user;
+             GRANT ALL ON ALL TABLES IN SCHEMA etl TO repl_user;
+             GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA etl TO repl_user",
         )
         .await?;
     drop(client);

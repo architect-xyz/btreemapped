@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn test_read_only_update_fails() {
         let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
-        let result = replica.update(&("a".to_string(),), |f| Ok(f));
+        let result = replica.update(&("a".to_string(),), Ok);
         assert!(result.is_err());
     }
 
@@ -594,9 +594,7 @@ mod tests {
     fn test_in_memory_update_nonexistent() {
         let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new_in_memory();
         // Updating a key that doesn't exist should be a no-op
-        replica
-            .update(&("missing".to_string(),), |f| Ok(f))
-            .unwrap();
+        replica.update(&("missing".to_string(),), Ok).unwrap();
         assert!(!replica.contains_key("missing".to_string()));
     }
 

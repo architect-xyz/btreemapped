@@ -9,8 +9,8 @@ bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 derive_more = { version = "1", features = ["try_into"] }
 env_logger = "0.11"
-etl = { git = "https://github.com/supabase/etl.git", rev = "7f3f240442c18d228c97f861fa4352232dc6eec4", default-features = false }
-etl-postgres = { git = "https://github.com/supabase/etl.git", rev = "7f3f240442c18d228c97f861fa4352232dc6eec4", default-features = false, features = [
+etl = { git = "https://github.com/supabase/etl.git", rev = "f7f6aea7fd856b4e0565fa06f5c3da4427ea7acb", default-features = false }
+etl-postgres = { git = "https://github.com/supabase/etl.git", rev = "f7f6aea7fd856b4e0565fa06f5c3da4427ea7acb", default-features = false, features = [
   "replication",
 ] }
 futures = "0.3"
@@ -20,7 +20,12 @@ paste = "1"
 postgres-types = "*"
 # postgres-types = { git = "https://github.com/MaterializeInc/rust-postgres", rev = "c4b473b478b3adfbf8667d2fbe895d8423f1290b" }
 rand = "0.8"
-rust_decimal = { version = "1", features = ["db-postgres"] }
+# serde-with-arbitrary-precision because etl force-enables serde_json's
+# arbitrary_precision feature, which changes how JSON numbers deserialize
+rust_decimal = { version = "1", features = [
+  "db-postgres",
+  "serde-with-arbitrary-precision",
+] }
 rust_decimal_macros = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -32,13 +37,16 @@ sqlx = { version = "0.8", features = [
 testcontainers = "0.25"
 thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
-tokio-postgres = { git = "https://github.com/MaterializeInc/rust-postgres", default-features = false, rev = "c4b473b478b3adfbf8667d2fbe895d8423f1290b" }
+tokio-postgres = { git = "https://github.com/MaterializeInc/rust-postgres", default-features = false, rev = "c4b473b478b3adfbf8667d2fbe895d8423f1290b", features = [
+  "runtime",
+  "with-serde_json-1",
+] }
 tokio-util = "0.7"
 trait-gen = "0.3"
 uuid = "1"
 
 # For local development; uncomment as needed
-# etl = { path = "../etl/etl", default-features = false }
-# etl-postgres = { path = "../etl/etl-postgres", default-features = false, features = [
+# etl = { path = "../etl/crates/etl", default-features = false }
+# etl-postgres = { path = "../etl/crates/etl-postgres", default-features = false, features = [
 #     "replication",
 # ] }

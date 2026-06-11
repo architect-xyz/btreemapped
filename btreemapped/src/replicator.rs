@@ -4,19 +4,32 @@ use crate::{
 };
 use etl::{
     config::PipelineConfig,
-    destination::Destination,
-    error::{ErrorKind, EtlError, EtlResult},
+    destination::{
+        Destination, DropTableForCopyResult, WriteEventsResult, WriteTableRowsResult,
+    },
+    error::{ErrorKind, EtlResult},
     etl_error,
     pipeline::Pipeline,
-    state::table::TableReplicationPhase,
-    store::{cleanup::CleanupStore, schema::SchemaStore, state::StateStore},
-    types::{Event, TableName, TableRow},
+    replication::WorkerType,
+    state::{
+        AppliedDestinationTableMetadata, DestinationTableMetadata,
+        DestinationTableSchemaStatus, TableState,
+    },
+    store::{
+        lifecycle::{TableStateLifecycleStore, TableStateOperation},
+        schema::SchemaStore,
+        state::{StateStore, TableStates},
+        MemoryStore,
+    },
+    types::{
+        Event, PgLsn, ReplicatedTableSchema, SnapshotId, TableId, TableName, TableRow,
+        TableSchema,
+    },
 };
-use etl_postgres::types::{TableId, TableSchema};
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{HashMap, HashSet},
     sync::Arc,
 };
 use tokio::sync::{futures::OwnedNotified, Notify};
@@ -29,32 +42,18 @@ struct Inner {
     committed_lsn: u64,
     txn_lsn: Option<u64>,
     fully_synced: bool,
-    /// Current replication state for each table - this is the authoritative source of truth
-    /// for table states. Every table being replicated must have an entry here.
-    table_replication_states: BTreeMap<TableId, TableReplicationPhase>,
-    /// Complete history of state transitions for each table, used for debugging and auditing.
-    /// This is an append-only log that grows over time and provides visibility into
-    /// table state evolution. Entries are chronologically ordered.
-    table_state_history: HashMap<TableId, Vec<TableReplicationPhase>>,
-    /// Cached table schema definitions, reference-counted for efficient sharing.
-    /// Schemas are expensive to fetch from Postgres, so they're cached here
-    /// once retrieved and shared via Arc across the application.
-    table_schemas: HashMap<TableId, Arc<TableSchema>>,
-    /// Mapping from table IDs to human-readable table names for easier debugging
-    /// and logging. These mappings are established during schema discovery.
-    table_mappings: HashMap<TableId, String>,
 }
 
 /// In-memory storage for ETL pipeline state and schema information.
 ///
-/// [`BTreeMapReplicator`] implements both [`StateStore`] and [`SchemaStore`] traits,
-/// providing a complete storage solution that keeps all data in memory. This is
-/// ideal for testing, development, and scenarios where persistence is not required.
-///
-/// All state information including table replication phases, schema definitions,
-/// and table mappings are stored in memory and will be lost on process restart.
+/// [`BTreeMapReplicator`] implements the store traits required by
+/// [`etl::store::PipelineStore`] by delegating to [`MemoryStore`], providing a
+/// complete storage solution that keeps all data in memory. Replication state
+/// is intentionally ephemeral: restarting the process does a fresh snapshot of
+/// all replicated tables.
 #[derive(Clone)]
 pub struct BTreeMapReplicator {
+    store: MemoryStore,
     inner: Arc<Mutex<Inner>>,
     synced: Arc<Notify>,
 }
@@ -72,13 +71,10 @@ impl BTreeMapReplicator {
             committed_lsn: 0,
             txn_lsn: None,
             fully_synced: false,
-            table_replication_states: BTreeMap::new(),
-            table_state_history: HashMap::new(),
-            table_schemas: HashMap::new(),
-            table_mappings: HashMap::new(),
         };
 
         Self {
+            store: MemoryStore::new(),
             inner: Arc::new(Mutex::new(inner)),
             synced: Arc::new(Notify::new()),
         }
@@ -134,6 +130,61 @@ impl BTreeMapReplicator {
 
         Ok(())
     }
+
+    /// Notify `synced` waiters once every table has finished its initial
+    /// copy and catch-up (reached `SyncDone` or `Ready`).
+    fn check_fully_synced(&self, table_states: &TableStates) {
+        let all_synced = !table_states.is_empty()
+            && table_states.values().all(|state| {
+                matches!(state, TableState::SyncDone { .. } | TableState::Ready)
+            });
+        if all_synced {
+            let mut inner = self.inner.lock();
+            if !inner.fully_synced {
+                inner.fully_synced = true;
+                self.synced.notify_waiters();
+            }
+        }
+    }
+
+    /// Stores or advances destination table metadata for a table.
+    ///
+    /// The pipeline uses this metadata to know that a destination "object"
+    /// (here: the in-memory replica) exists for the table, so it can ask us
+    /// to drop it via [`Destination::drop_table_for_copy`] before restarting
+    /// a table copy.
+    async fn sync_destination_table_metadata(
+        &self,
+        schema: &ReplicatedTableSchema,
+    ) -> EtlResult<()> {
+        let table_id = schema.id();
+        let existing = self.store.get_destination_table_metadata(table_id).await?;
+        let metadata = match existing {
+            Some(metadata)
+                if metadata.snapshot_id == schema.inner().snapshot_id
+                    && metadata.replication_mask == *schema.replication_mask() =>
+            {
+                return Ok(());
+            }
+            Some(metadata) => metadata
+                .with_schema_change(
+                    schema.inner().snapshot_id,
+                    schema.replication_mask().clone(),
+                    DestinationTableSchemaStatus::Applied,
+                )
+                .to_applied(),
+            None => DestinationTableMetadata::new_applied(
+                normalized_table_name(schema.name()),
+                schema.inner().snapshot_id,
+                schema.replication_mask().clone(),
+            ),
+        };
+        self.store
+            .store_destination_table_metadata(table_id, metadata)
+            .await?;
+
+        Ok(())
+    }
 }
 
 impl Default for BTreeMapReplicator {
@@ -143,121 +194,86 @@ impl Default for BTreeMapReplicator {
 }
 
 impl StateStore for BTreeMapReplicator {
-    async fn get_table_replication_state(
-        &self,
-        table_id: TableId,
-    ) -> EtlResult<Option<TableReplicationPhase>> {
-        let inner = self.inner.lock();
-
-        Ok(inner.table_replication_states.get(&table_id).cloned())
+    async fn get_table_state(&self, table_id: TableId) -> EtlResult<Option<TableState>> {
+        self.store.get_table_state(table_id).await
     }
 
-    async fn get_table_replication_states(
-        &self,
-    ) -> EtlResult<BTreeMap<TableId, TableReplicationPhase>> {
-        let inner = self.inner.lock();
-
-        Ok(inner.table_replication_states.clone())
+    async fn get_table_states(&self) -> EtlResult<TableStates> {
+        self.store.get_table_states().await
     }
 
-    async fn load_table_replication_states(&self) -> EtlResult<usize> {
-        let inner = self.inner.lock();
-
-        Ok(inner.table_replication_states.len())
+    async fn load_table_states(&self) -> EtlResult<usize> {
+        self.store.load_table_states().await
     }
 
-    async fn update_table_replication_states(
+    async fn update_table_states(
         &self,
-        updates: Vec<(TableId, TableReplicationPhase)>,
+        updates: Vec<(TableId, TableState)>,
     ) -> EtlResult<()> {
-        let mut inner = self.inner.lock();
+        self.store.update_table_states(updates).await?;
 
-        for (table_id, state) in updates {
-            // Store the current state in history before updating
-            if let Some(current_state) =
-                inner.table_replication_states.get(&table_id).cloned()
-            {
-                inner
-                    .table_state_history
-                    .entry(table_id)
-                    .or_default()
-                    .push(current_state);
-            }
-
-            inner.table_replication_states.insert(table_id, state);
-        }
-
-        if !inner.fully_synced
-            && inner
-                .table_replication_states
-                .values()
-                .all(|state| matches!(state, TableReplicationPhase::SyncDone { .. }))
-        {
-            inner.fully_synced = true;
-            self.synced.notify_waiters();
-        }
+        let table_states = self.store.get_table_states().await?;
+        self.check_fully_synced(&table_states);
 
         Ok(())
     }
 
-    async fn rollback_table_replication_state(
+    async fn rollback_table_state(&self, table_id: TableId) -> EtlResult<TableState> {
+        self.store.rollback_table_state(table_id).await
+    }
+
+    async fn get_replication_progress(
+        &self,
+        worker_type: WorkerType,
+    ) -> EtlResult<Option<PgLsn>> {
+        self.store.get_replication_progress(worker_type).await
+    }
+
+    async fn upsert_replication_progress(
+        &self,
+        worker_type: WorkerType,
+        flush_lsn: PgLsn,
+    ) -> EtlResult<PgLsn> {
+        self.store
+            .upsert_replication_progress(worker_type, flush_lsn)
+            .await
+    }
+
+    async fn delete_replication_progress(
+        &self,
+        worker_type: WorkerType,
+    ) -> EtlResult<()> {
+        self.store.delete_replication_progress(worker_type).await
+    }
+
+    async fn get_destination_table_metadata(
         &self,
         table_id: TableId,
-    ) -> EtlResult<TableReplicationPhase> {
-        let mut inner = self.inner.lock();
-
-        // Get the previous state from history
-        let previous_state = inner
-            .table_state_history
-            .get_mut(&table_id)
-            .and_then(|history| history.pop())
-            .ok_or_else(|| {
-                etl_error!(
-                    ErrorKind::StateRollbackError,
-                    "No previous state available to roll back to"
-                )
-            })?;
-
-        // Update the current state to the previous state
-        inner
-            .table_replication_states
-            .insert(table_id, previous_state.clone());
-
-        Ok(previous_state)
+    ) -> EtlResult<Option<DestinationTableMetadata>> {
+        self.store.get_destination_table_metadata(table_id).await
     }
 
-    async fn get_table_mapping(
+    async fn get_applied_destination_table_metadata(
         &self,
-        source_table_id: &TableId,
-    ) -> EtlResult<Option<String>> {
-        let inner = self.inner.lock();
-
-        Ok(inner.table_mappings.get(source_table_id).cloned())
+        table_id: TableId,
+    ) -> EtlResult<Option<AppliedDestinationTableMetadata>> {
+        self.store
+            .get_applied_destination_table_metadata(table_id)
+            .await
     }
 
-    async fn get_table_mappings(&self) -> EtlResult<HashMap<TableId, String>> {
-        let inner = self.inner.lock();
-
-        Ok(inner.table_mappings.clone())
+    async fn load_destination_tables_metadata(&self) -> EtlResult<usize> {
+        self.store.load_destination_tables_metadata().await
     }
 
-    async fn load_table_mappings(&self) -> EtlResult<usize> {
-        let inner = self.inner.lock();
-
-        Ok(inner.table_mappings.len())
-    }
-
-    async fn store_table_mapping(
+    async fn store_destination_table_metadata(
         &self,
-        source_table_id: TableId,
-        destination_table_id: String,
+        table_id: TableId,
+        metadata: DestinationTableMetadata,
     ) -> EtlResult<()> {
-        let mut inner = self.inner.lock();
-        inner
-            .table_mappings
-            .insert(source_table_id, destination_table_id);
-
-        Ok(())
+        self.store
+            .store_destination_table_metadata(table_id, metadata)
+            .await
     }
 }
 
@@ -265,66 +281,79 @@ impl SchemaStore for BTreeMapReplicator {
     async fn get_table_schema(
         &self,
         table_id: &TableId,
+        snapshot_id: SnapshotId,
     ) -> EtlResult<Option<Arc<TableSchema>>> {
-        let inner = self.inner.lock();
-
-        Ok(inner.table_schemas.get(table_id).cloned())
+        self.store.get_table_schema(table_id, snapshot_id).await
     }
 
     async fn get_table_schemas(&self) -> EtlResult<Vec<Arc<TableSchema>>> {
-        let inner = self.inner.lock();
-
-        Ok(inner.table_schemas.values().cloned().collect())
+        self.store.get_table_schemas().await
     }
 
     async fn load_table_schemas(&self) -> EtlResult<usize> {
-        let inner = self.inner.lock();
-
-        Ok(inner.table_schemas.len())
+        self.store.load_table_schemas().await
     }
 
-    async fn store_table_schema(&self, table_schema: TableSchema) -> EtlResult<()> {
-        let mut inner = self.inner.lock();
-
-        let table_schema = Arc::new(table_schema);
-        let sink_table_name = normalized_table_name(&table_schema.name);
+    async fn store_table_schema(
+        &self,
+        table_schema: TableSchema,
+    ) -> EtlResult<Arc<TableSchema>> {
+        let table_schema = self.store.store_table_schema(table_schema).await?;
 
         #[cfg(feature = "log")]
         log::trace!("store_table_schema: {:?}", table_schema);
 
-        if inner.sinks.contains_key(&table_schema.id) {
-            #[cfg(feature = "log")]
-            log::error!("table schema already registered: {:?}", table_schema);
-            Err::<_, EtlError>(
-                (ErrorKind::DestinationError, SCHEMA_CHANGE_NOT_ALLOWED_ERROR).into(),
-            )?;
-        } else if let Some(replica) = inner.pending_sinks.remove(&sink_table_name) {
-            #[cfg(feature = "log")]
-            log::debug!(
-                "table {} sink assigned, table_id = {}",
-                sink_table_name,
-                table_schema.id
-            );
-            let sink = replica.to_sink(table_schema.clone());
-            inner.sinks.insert(table_schema.id, sink);
+        // Assign a pending sink the first time we learn the table's id.
+        // Schemas are versioned upstream and stored repeatedly (table copy,
+        // relation messages, DDL); subsequent versions for an already-known
+        // table are just recorded.
+        let mut inner = self.inner.lock();
+        if !inner.sinks.contains_key(&table_schema.id) {
+            let sink_table_name = normalized_table_name(&table_schema.name);
+            if let Some(replica) = inner.pending_sinks.remove(&sink_table_name) {
+                #[cfg(feature = "log")]
+                log::debug!(
+                    "table {} sink assigned, table_id = {}",
+                    sink_table_name,
+                    table_schema.id
+                );
+                let sink = replica.to_sink();
+                inner.sinks.insert(table_schema.id, sink);
+            }
         }
 
-        inner.table_schemas.insert(table_schema.id, table_schema);
+        Ok(table_schema)
+    }
 
-        Ok(())
+    async fn prune_table_schemas(
+        &self,
+        table_schema_retentions: HashMap<
+            TableId,
+            etl::store::schema::TableSchemaRetention,
+        >,
+    ) -> EtlResult<u64> {
+        self.store
+            .prune_table_schemas(table_schema_retentions)
+            .await
     }
 }
 
-impl CleanupStore for BTreeMapReplicator {
-    async fn cleanup_table_state(&self, table_id: TableId) -> EtlResult<()> {
-        let mut inner = self.inner.lock();
+impl TableStateLifecycleStore for BTreeMapReplicator {
+    async fn apply_table_state_operation(
+        &self,
+        operation: TableStateOperation,
+    ) -> EtlResult<usize> {
+        let affected = self.store.apply_table_state_operation(operation).await?;
 
-        inner.table_replication_states.remove(&table_id);
-        inner.table_state_history.remove(&table_id);
-        inner.table_schemas.remove(&table_id);
-        inner.table_mappings.remove(&table_id);
+        if matches!(operation, TableStateOperation::ResetForResync) {
+            // A resync redoes the initial copy of every table; arm the
+            // `synced` notification again so waiters can observe completion
+            // of the fresh pass.
+            let mut inner = self.inner.lock();
+            inner.fully_synced = false;
+        }
 
-        Ok(())
+        Ok(affected)
     }
 }
 
@@ -333,30 +362,45 @@ impl Destination for BTreeMapReplicator {
         "btreemapped"
     }
 
-    async fn truncate_table(&self, table_id: TableId) -> EtlResult<()> {
-        let mut inner = self.inner.lock();
-        if let Some(sink) = inner.sinks.get_mut(&table_id) {
-            sink.truncate();
+    async fn drop_table_for_copy(
+        &self,
+        replicated_table_schema: &ReplicatedTableSchema,
+        async_result: DropTableForCopyResult<()>,
+    ) -> EtlResult<()> {
+        {
+            let mut inner = self.inner.lock();
+            if let Some(sink) = inner.sinks.get_mut(&replicated_table_schema.id()) {
+                sink.truncate();
+            }
         }
+        async_result.send(Ok(()));
         Ok(())
     }
 
     async fn write_table_rows(
         &self,
-        table_id: TableId,
-        rows: Vec<TableRow>,
+        replicated_table_schema: &ReplicatedTableSchema,
+        table_rows: Vec<TableRow>,
+        async_result: WriteTableRowsResult<()>,
     ) -> EtlResult<()> {
+        let table_id = replicated_table_schema.id();
         #[cfg(feature = "log")]
-        log::trace!("write_table_rows to table {table_id}: {} rows", rows.len());
+        log::trace!(
+            "write_table_rows to table {table_id}: {} rows",
+            table_rows.len()
+        );
+        self.sync_destination_table_metadata(replicated_table_schema)
+            .await?;
         let should_yield = {
             let mut inner = self.inner.lock();
             if let Some(sink) = inner.sinks.get_mut(&table_id) {
-                sink.write_table_rows(rows)?;
+                sink.write_table_rows(replicated_table_schema, table_rows)?;
                 true
             } else {
                 false
             }
         };
+        async_result.send(Ok(()));
         if should_yield {
             // let consumers catch up
             // CR alee: possibly we could make this more efficient by tuning when we
@@ -366,7 +410,39 @@ impl Destination for BTreeMapReplicator {
         Ok(())
     }
 
-    async fn write_events(&self, events: Vec<Event>) -> EtlResult<()> {
+    async fn write_events(
+        &self,
+        events: Vec<Event>,
+        async_result: WriteEventsResult<()>,
+    ) -> EtlResult<()> {
+        // Keep destination table metadata current for every schema version
+        // seen in this batch, so the pipeline knows the replica exists (and
+        // can prune obsolete schema versions).
+        let mut seen_snapshots = HashSet::new();
+        for event in &events {
+            let schemas: &[ReplicatedTableSchema] = match event {
+                Event::Insert(insert) => {
+                    std::slice::from_ref(&insert.replicated_table_schema)
+                }
+                Event::Update(update) => {
+                    std::slice::from_ref(&update.replicated_table_schema)
+                }
+                Event::Delete(delete) => {
+                    std::slice::from_ref(&delete.replicated_table_schema)
+                }
+                Event::Relation(relation) => {
+                    std::slice::from_ref(&relation.replicated_table_schema)
+                }
+                Event::Truncate(truncate) => &truncate.truncated_tables,
+                Event::Begin(_) | Event::Commit(_) | Event::Unsupported => &[],
+            };
+            for schema in schemas {
+                if seen_snapshots.insert((schema.id(), schema.inner().snapshot_id)) {
+                    self.sync_destination_table_metadata(schema).await?;
+                }
+            }
+        }
+
         for event in events {
             #[cfg(feature = "log")]
             log::trace!("write_events: {:?}", event);
@@ -402,27 +478,33 @@ impl Destination for BTreeMapReplicator {
                 }
                 Event::Insert(insert) => {
                     let mut inner = self.inner.lock();
-                    if let Some(sink) = inner.sinks.get_mut(&insert.table_id) {
+                    if let Some(sink) =
+                        inner.sinks.get_mut(&insert.replicated_table_schema.id())
+                    {
                         sink.write_event(Event::Insert(insert))?;
                     }
                 }
                 Event::Update(update) => {
                     let mut inner = self.inner.lock();
-                    if let Some(sink) = inner.sinks.get_mut(&update.table_id) {
+                    if let Some(sink) =
+                        inner.sinks.get_mut(&update.replicated_table_schema.id())
+                    {
                         sink.write_event(Event::Update(update))?;
                     }
                 }
                 Event::Delete(delete) => {
                     let mut inner = self.inner.lock();
-                    if let Some(sink) = inner.sinks.get_mut(&delete.table_id) {
+                    if let Some(sink) =
+                        inner.sinks.get_mut(&delete.replicated_table_schema.id())
+                    {
                         sink.write_event(Event::Delete(delete))?;
                     }
                 }
                 Event::Relation(..) => {}
                 Event::Truncate(truncate) => {
                     let mut inner = self.inner.lock();
-                    for rel_id in truncate.rel_ids {
-                        if let Some(sink) = inner.sinks.get_mut(&rel_id.into()) {
+                    for schema in truncate.truncated_tables {
+                        if let Some(sink) = inner.sinks.get_mut(&schema.id()) {
                             sink.truncate();
                         }
                     }
@@ -436,6 +518,7 @@ impl Destination for BTreeMapReplicator {
                 tokio::task::yield_now().await;
             }
         }
+        async_result.send(Ok(()));
         Ok(())
     }
 }
@@ -449,6 +532,3 @@ pub(crate) fn normalized_table_name(table_name: &TableName) -> String {
         table_name.to_string()
     }
 }
-
-static SCHEMA_CHANGE_NOT_ALLOWED_ERROR: &str =
-    "btreemapped destination does not tolerate online schema changes or table renames";
