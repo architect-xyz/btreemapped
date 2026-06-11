@@ -38,6 +38,10 @@ rust_decimal = { workspace = true, optional = true, features = ["maths"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true, optional = true }
+# Not used directly: pins the sqlx 0.9 line (pulled in by etl-postgres) to the
+# exact prerelease that etl builds against, since etl's "0.9.0-alpha.1"
+# requirement would otherwise float to 0.9.0 and fail to compile.
+sqlx09 = { package = "sqlx", version = "=0.9.0-alpha.1", default-features = false }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-postgres = { workspace = true }
@@ -54,3 +58,4 @@ rust_decimal = { workspace = true }
 rust_decimal_macros = { workspace = true }
 testcontainers = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

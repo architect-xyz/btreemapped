@@ -64,11 +64,13 @@ async fn main() -> Result<()> {
     // periodically print the state of the replica
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
     loop {
-        let state = replica.read();
-        eprintln!("{state:?}");
-        // to trigger this println, insert a row into foobars with id 1337
-        if let Some(row_with_id_1337) = state.get(&(1337,).into()) {
-            eprintln!("row with id 1337: {row_with_id_1337:?}");
+        {
+            let state = replica.read();
+            eprintln!("{state:?}");
+            // to trigger this println, insert a row into foobars with id 1337
+            if let Some(row_with_id_1337) = state.get(&(1337,).into()) {
+                eprintln!("row with id 1337: {row_with_id_1337:?}");
+            }
         }
         interval.tick().await;
         if replication_task.is_finished() {
@@ -83,6 +85,7 @@ async fn main() -> Result<()> {
 fn pg_config() -> PgConnectionConfig {
     PgConnectionConfig {
         host: "localhost".to_string(),
+        hostaddr: None,
         port: 54320,
         name: "postgres".to_string(), // database name
         username: "postgres".to_string(),
@@ -103,13 +106,16 @@ fn pipeline_config() -> PipelineConfig {
         publication_name: "foobars_pub".to_string(),
         pg_connection: pg_config(),
         batch: BatchConfig {
-            max_size: 100,
             max_fill_ms: 1000,
+            ..Default::default()
         },
         table_error_retry_delay_ms: 10000,
         table_error_retry_max_attempts: 5,
         max_table_sync_workers: 4,
         max_copy_connections_per_table: 1,
+        store_pg_connection: None,
+        memory_refresh_interval_ms: 100,
+        memory_backpressure: None,
         table_sync_copy: Default::default(),
         invalidated_slot_behavior: Default::default(),
     }

@@ -67,6 +67,7 @@ fn strict_pipeline_config(host: &str, port: u16) -> PipelineConfig {
         publication_name: "strict_pub".to_string(),
         pg_connection: PgConnectionConfig {
             host: host.to_string(),
+            hostaddr: None,
             port,
             name: "testdb".to_string(),
             username: "postgres".to_string(),
@@ -78,13 +79,16 @@ fn strict_pipeline_config(host: &str, port: u16) -> PipelineConfig {
             keepalive: TcpKeepaliveConfig::default(),
         },
         batch: BatchConfig {
-            max_size: 100,
             max_fill_ms: 100,
+            ..Default::default()
         },
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
         max_copy_connections_per_table: 1,
+        store_pg_connection: None,
+        memory_refresh_interval_ms: 100,
+        memory_backpressure: None,
         table_sync_copy: Default::default(),
         invalidated_slot_behavior: Default::default(),
     }
@@ -219,6 +223,7 @@ fn status_pipeline_config(host: &str, port: u16) -> PipelineConfig {
         publication_name: "status_pub".to_string(),
         pg_connection: PgConnectionConfig {
             host: host.to_string(),
+            hostaddr: None,
             port,
             name: "testdb".to_string(),
             username: "postgres".to_string(),
@@ -230,13 +235,16 @@ fn status_pipeline_config(host: &str, port: u16) -> PipelineConfig {
             keepalive: TcpKeepaliveConfig::default(),
         },
         batch: BatchConfig {
-            max_size: 100,
             max_fill_ms: 100,
+            ..Default::default()
         },
         table_error_retry_delay_ms: 1000,
         table_error_retry_max_attempts: 3,
         max_table_sync_workers: 4,
         max_copy_connections_per_table: 1,
+        store_pg_connection: None,
+        memory_refresh_interval_ms: 100,
+        memory_backpressure: None,
         table_sync_copy: Default::default(),
         invalidated_slot_behavior: Default::default(),
     }

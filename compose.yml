@@ -3,7 +3,11 @@ services:
   # postgresql://postgres:postgres@localhost:54320
   postgres:
     image: "postgres:16-alpine"
-    command: ["postgres", "-c", "wal_level=logical"]
+    # wal_sender_timeout=5s so the SyncWait→Catchup handoff (which is driven
+    # by keepalives when the apply worker is idle) completes quickly, same as
+    # the integration test containers
+    command:
+      ["postgres", "-c", "wal_level=logical", "-c", "wal_sender_timeout=5s"]
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres

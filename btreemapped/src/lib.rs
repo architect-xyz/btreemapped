@@ -19,9 +19,22 @@ pub(crate) mod sink;
 /// `supabase_etl_table_sync_{pipeline_id}_{table_id}`).
 pub mod config {
     pub use etl::config::{
-        BatchConfig, InvalidatedSlotBehavior, PgConnectionConfig, PipelineConfig,
-        TableSyncCopyConfig, TcpKeepaliveConfig, TlsConfig,
+        BatchConfig, InvalidatedSlotBehavior, MemoryBackpressureConfig,
+        PgConnectionConfig, PipelineConfig, TableSyncCopyConfig, TcpKeepaliveConfig,
+        TlsConfig,
     };
+}
+
+/// Re-exported migration helpers from [`etl`].
+///
+/// Since supabase/etl#712, every pipeline runs a set of source-database
+/// migrations on startup (installing the `etl` schema and a DDL event
+/// trigger for schema-change messages).  Creating an event trigger requires
+/// superuser, so if your pipeline connects as a restricted role, run
+/// [`migrations::run_source_migrations`] once as a privileged role first;
+/// the pipeline will then verify the migrations instead of applying them.
+pub mod migrations {
+    pub use etl::migrations::run_source_migrations;
 }
 
 #[cfg(feature = "derive")]
@@ -57,16 +70,20 @@ pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     /// Build the index value for this struct.
     fn index(&self) -> Self::Index;
 
-    /// Parse a row from etl into a full struct.
-    fn parse_row(
-        schema: &etl_postgres::types::TableSchema,
+    /// Parse a row from etl into a full struct.  Row values are matched
+    /// positionally against `columns`, which must be in the same order as
+    /// the row values (e.g. the replicated column schemas of the table).
+    fn parse_row<'a>(
+        columns: impl Iterator<Item = &'a etl_postgres::types::ColumnSchema>,
         row: etl::types::TableRow,
     ) -> anyhow::Result<Self>;
 
     /// Parse a row from etl into just the index.
-    /// Used for UPDATE/DELETE operations.
-    fn parse_row_index(
-        schema: &etl_postgres::types::TableSchema,
+    /// Used for UPDATE/DELETE operations.  Row values are matched
+    /// positionally against `columns`; for key-only rows, pass the identity
+    /// column schemas of the table.
+    fn parse_row_index<'a>(
+        columns: impl Iterator<Item = &'a etl_postgres::types::ColumnSchema>,
         row: etl::types::TableRow,
     ) -> anyhow::Result<Self::Index>;
 }

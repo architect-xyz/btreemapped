@@ -344,22 +344,19 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                 #index_tuple_ctor
             }
 
-            fn parse_row(
-                schema: &etl_postgres::types::TableSchema,
+            fn parse_row<'a>(
+                columns: impl Iterator<Item = &'a etl_postgres::types::ColumnSchema>,
                 row: etl::types::TableRow,
             ) -> anyhow::Result<Self> {
                 use anyhow::Context;
                 #(#parse_row_index_var_decls;)*
                 #(#parse_row_unindexed_var_decls;)*
-                let mut _n = 0;
-                for v in row.values {
-                    let col = &schema.column_schemas[_n];
+                for (col, v) in columns.zip(row.into_values()) {
                     match col.name.as_ref() {
                         #(#parse_row_index_match_arms,)*
                         #(#parse_row_unindexed_match_arms,)*
                         _ => {}
                     }
-                    _n += 1;
                 }
                 #(#unwrap_index_vars)*
                 #(#unwrap_unindexed_vars)*
@@ -369,20 +366,17 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
                 })
             }
 
-            fn parse_row_index(
-                schema: &etl_postgres::types::TableSchema,
+            fn parse_row_index<'a>(
+                columns: impl Iterator<Item = &'a etl_postgres::types::ColumnSchema>,
                 row: etl::types::TableRow,
             ) -> anyhow::Result<Self::Index> {
                 use anyhow::Context;
                 #(#parse_row_index_var_decls;)*
-                let mut _n = 0;
-                for v in row.values {
-                    let col = &schema.column_schemas[_n];
+                for (col, v) in columns.zip(row.into_values()) {
                     match col.name.as_ref() {
                         #(#parse_row_index_match_arms,)*
                         _ => {}
                     }
-                    _n += 1;
                 }
                 #(#unwrap_index_vars)*
                 Ok(#parse_row_index_ctor)
