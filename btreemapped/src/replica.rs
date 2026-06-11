@@ -359,20 +359,25 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
 
     pub fn contains_key<Q>(&self, i: Q) -> bool
     where
-        Q: Into<T::LIndex>,
+        Q: Lookup<T::LIndex>,
     {
-        let i: T::LIndex = i.into();
         let replica = self.replica.read();
-        replica.contains_key(&i)
+        i.lookup(&replica.t).is_some()
     }
 
+    /// Look up an entry by key.  See [`Lookup`] for the accepted key
+    /// forms, e.g. for a `String`-indexed arity-1 replica all of these
+    /// work, the first without allocating:
+    ///
+    /// - `replica.get("hello")`
+    /// - `replica.get("hello".to_string())`
+    /// - `replica.get(("hello".to_string(),))`
     pub fn get<Q>(&self, i: Q) -> Option<MappedRwLockReadGuard<'_, T>>
     where
-        Q: Into<T::LIndex>,
+        Q: Lookup<T::LIndex>,
     {
-        let i: T::LIndex = i.into();
         let replica = self.replica.read();
-        RwLockReadGuard::try_map(replica, |r| r.get(&i)).ok()
+        RwLockReadGuard::try_map(replica, |r| i.lookup(&r.t)).ok()
     }
 
     pub fn for_each<F>(&self, mut f: F)
@@ -398,8 +403,6 @@ impl_for_range!(LIndex1<I0>);
 impl_for_range!(LIndex2<I0, I1>);
 impl_for_range!(LIndex3<I0, I1, I2>);
 impl_for_range!(LIndex4<I0, I1, I2, I3>);
-
-// CR alee: consider the trick in https://stackoverflow.com/questions/45786717/how-to-get-value-from-hashmap-with-two-keys-via-references-to-both-keys
 
 #[cfg(test)]
 mod tests {
@@ -433,9 +436,21 @@ mod tests {
             Some("2024-03-01T00:30:44Z".parse().unwrap()),
         ));
         replica.insert_for_test(Foo::new("ghi", None));
-        let foo = replica.get("def".to_string()).unwrap();
+        // zero-allocation &str lookup, no tuple required
+        let foo = replica.get("def").unwrap();
         assert_eq!(foo.key, "def");
         assert_eq!(foo.bar, Some("2024-03-01T00:30:44Z".parse().unwrap()));
+        drop(foo);
+        // the other accepted key forms
+        assert!(replica.get("def".to_string()).is_some());
+        assert!(replica.get(("def".to_string(),)).is_some());
+        let key = "def".to_string();
+        assert!(replica.get(&key).is_some());
+        let lindex: <Foo as BTreeMapped<1>>::LIndex = (key,).into();
+        assert!(replica.get(&lindex).is_some());
+        assert!(replica.get(lindex).is_some());
+        assert!(replica.contains_key("def"));
+        assert!(!replica.contains_key("xyz"));
         let mut io = vec![];
         replica.for_range1("abc".to_string()..="ghi".to_string(), |foo| {
             io.push(format!("{} {:?}", foo.key, foo.bar));
@@ -477,6 +492,10 @@ mod tests {
         replica.insert_for_test(Car::new("Charlie", 1003, "ghi"));
         let elem = replica.get((Cow::Borrowed("Alice"), 123)).unwrap();
         assert_eq!(elem.key, "abc");
+        drop(elem);
+        // tuple elements convert via Into, so &str works for a Cow index
+        let elem = replica.get(("Alice", 123)).unwrap();
+        assert_eq!(elem.key, "abc");
         let mut io = vec![];
         replica.for_range1(Cow::Borrowed("Alice")..=Cow::Borrowed("Bob"), |car| {
             io.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
@@ -500,6 +519,28 @@ mod tests {
             io4,
             vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]
         );
+    }
+
+    #[derive(Debug, Clone, BTreeMapped)]
+    #[btreemap(index = ["id"])]
+    struct Num {
+        id: i64,
+        val: String,
+    }
+
+    #[test]
+    fn test_btreemap_replica_bare_int_key() {
+        let replica: BTreeMapReplica<Num, 1> = BTreeMapReplica::new();
+        replica.insert_for_test(Num {
+            id: 42,
+            val: "answer".to_string(),
+        });
+        // bare value, no tuple required
+        assert_eq!(replica.get(42i64).unwrap().val, "answer");
+        // 1-tuple form still works
+        assert_eq!(replica.get((42i64,)).unwrap().val, "answer");
+        assert!(replica.contains_key(42i64));
+        assert!(!replica.contains_key(43i64));
     }
 
     // NB: testing the macro in `Baz` compiles
