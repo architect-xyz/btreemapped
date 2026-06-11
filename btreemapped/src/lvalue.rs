@@ -236,6 +236,78 @@ impl_tuple_lookup!(LIndex3, Q0 => I0, Q1 => I1, Q2 => I2);
 impl_tuple_lookup!(LIndex4, Q0 => I0, Q1 => I1, Q2 => I2, Q3 => I3);
 impl_tuple_lookup!(LIndex5, Q0 => I0, Q1 => I1, Q2 => I2, Q3 => I3, Q4 => I4);
 
+/// A range argument for the `for_rangeN` methods on `BTreeMapReplica`,
+/// generalizing `RangeBounds<I>` so that range endpoints convert to the
+/// index element type via `Into`.  This allows e.g.
+/// `for_range1("abc"..="ghi")` on a `String` index without building
+/// owned `String` bounds at the call site.
+///
+/// Implemented for the std range types and `(Bound<Q>, Bound<Q>)` where
+/// `Q: Into<I>`, and for `..` (`RangeFull`).  Unlike `RangeBounds`,
+/// endpoints are converted to owned values once per call, not per
+/// comparison.
+pub trait IntoBounds<I> {
+    fn into_bounds(self) -> (std::ops::Bound<I>, std::ops::Bound<I>);
+}
+
+impl<I> IntoBounds<I> for std::ops::RangeFull {
+    fn into_bounds(self) -> (std::ops::Bound<I>, std::ops::Bound<I>) {
+        (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+    }
+}
+
+impl<Q: Into<I>, I> IntoBounds<I> for std::ops::Range<Q> {
+    fn into_bounds(self) -> (std::ops::Bound<I>, std::ops::Bound<I>) {
+        (
+            std::ops::Bound::Included(self.start.into()),
+            std::ops::Bound::Excluded(self.end.into()),
+        )
+    }
+}
+
+impl<Q: Into<I>, I> IntoBounds<I> for std::ops::RangeInclusive<Q> {
+    fn into_bounds(self) -> (std::ops::Bound<I>, std::ops::Bound<I>) {
+        let (start, end) = self.into_inner();
+        (
+            std::ops::Bound::Included(start.into()),
+            std::ops::Bound::Included(end.into()),
+        )
+    }
+}
+
+impl<Q: Into<I>, I> IntoBounds<I> for std::ops::RangeFrom<Q> {
+    fn into_bounds(self) -> (std::ops::Bound<I>, std::ops::Bound<I>) {
+        (
+            std::ops::Bound::Included(self.start.into()),
+            std::ops::Bound::Unbounded,
+        )
+    }
+}
+
+impl<Q: Into<I>, I> IntoBounds<I> for std::ops::RangeTo<Q> {
+    fn into_bounds(self) -> (std::ops::Bound<I>, std::ops::Bound<I>) {
+        (
+            std::ops::Bound::Unbounded,
+            std::ops::Bound::Excluded(self.end.into()),
+        )
+    }
+}
+
+impl<Q: Into<I>, I> IntoBounds<I> for std::ops::RangeToInclusive<Q> {
+    fn into_bounds(self) -> (std::ops::Bound<I>, std::ops::Bound<I>) {
+        (
+            std::ops::Bound::Unbounded,
+            std::ops::Bound::Included(self.end.into()),
+        )
+    }
+}
+
+impl<Q: Into<I>, I> IntoBounds<I> for (std::ops::Bound<Q>, std::ops::Bound<Q>) {
+    fn into_bounds(self) -> (std::ops::Bound<I>, std::ops::Bound<I>) {
+        (self.0.map(Into::into), self.1.map(Into::into))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,6 +473,41 @@ mod tests {
         assert_eq!(("alice", 7u8).lookup(&map), Some(&1));
         assert_eq!(("alice".to_string(), 7i64).lookup(&map), Some(&1));
         assert_eq!(("bob", 7i64).lookup(&map), None);
+    }
+
+    #[test]
+    fn test_into_bounds() {
+        use std::ops::Bound;
+
+        let (s, e) = IntoBounds::<String>::into_bounds("a".."b");
+        assert_eq!(s, Bound::Included("a".to_string()));
+        assert_eq!(e, Bound::Excluded("b".to_string()));
+        let (s, e) = IntoBounds::<String>::into_bounds("a"..="b");
+        assert_eq!(s, Bound::Included("a".to_string()));
+        assert_eq!(e, Bound::Included("b".to_string()));
+        let (s, e) = IntoBounds::<String>::into_bounds("a"..);
+        assert_eq!(s, Bound::Included("a".to_string()));
+        assert_eq!(e, Bound::Unbounded);
+        let (s, e) = IntoBounds::<String>::into_bounds(.."b");
+        assert_eq!(s, Bound::Unbounded);
+        assert_eq!(e, Bound::Excluded("b".to_string()));
+        let (s, e) = IntoBounds::<String>::into_bounds(..="b");
+        assert_eq!(s, Bound::Unbounded);
+        assert_eq!(e, Bound::Included("b".to_string()));
+        let (s, e) = IntoBounds::<String>::into_bounds(..);
+        assert_eq!(s, Bound::Unbounded);
+        assert_eq!(e, Bound::Unbounded);
+        let (s, e) =
+            IntoBounds::<String>::into_bounds((Bound::Excluded("a"), Bound::Unbounded));
+        assert_eq!(s, Bound::Excluded("a".to_string()));
+        assert_eq!(e, Bound::Unbounded);
+        // owned endpoints and integer widening also work
+        let (s, e) = IntoBounds::<String>::into_bounds("a".to_string().."b".to_string());
+        assert_eq!(s, Bound::Included("a".to_string()));
+        assert_eq!(e, Bound::Excluded("b".to_string()));
+        let (s, e) = IntoBounds::<i64>::into_bounds(1u8..=2u8);
+        assert_eq!(s, Bound::Included(1i64));
+        assert_eq!(e, Bound::Included(2i64));
     }
 
     #[test]

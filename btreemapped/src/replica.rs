@@ -451,14 +451,21 @@ mod tests {
         assert!(replica.get(lindex).is_some());
         assert!(replica.contains_key("def"));
         assert!(!replica.contains_key("xyz"));
+        // borrowed range bounds, no String construction at the call site
         let mut io = vec![];
-        replica.for_range1("abc".to_string()..="ghi".to_string(), |foo| {
+        replica.for_range1("abc"..="ghi", |foo| {
             io.push(format!("{} {:?}", foo.key, foo.bar));
         });
         assert_eq!(
             io,
             vec!["abc None", "def Some(2024-03-01T00:30:44Z)", "ghi None"]
         );
+        // owned bounds still work
+        let mut io = vec![];
+        replica.for_range1("abc".to_string().."ghi".to_string(), |foo| {
+            io.push(foo.key.clone());
+        });
+        assert_eq!(io, vec!["abc", "def"]);
     }
 
     #[derive(Debug, Clone, BTreeMapped)]
@@ -496,13 +503,21 @@ mod tests {
         // tuple elements convert via Into, so &str works for a Cow index
         let elem = replica.get(("Alice", 123)).unwrap();
         assert_eq!(elem.key, "abc");
+        // borrowed range bounds convert via Into, no Cow construction
         let mut io = vec![];
-        replica.for_range1(Cow::Borrowed("Alice")..=Cow::Borrowed("Bob"), |car| {
+        replica.for_range1("Alice"..="Bob", |car| {
             io.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
         assert_eq!(io, vec!["Alice 123 abc", "Bob 456 def", "Bob 888 def"]);
+        // Cow bounds still work
+        let mut io = vec![];
+        replica.for_range1(Cow::Borrowed("Alice")..=Cow::Borrowed("Bob"), |car| {
+            io.push(format!("{}", car.license_plate));
+        });
+        assert_eq!(io, vec!["123", "456", "888"]);
+        // fixed prefix params convert via Into too
         let mut io2 = vec![];
-        replica.for_range2(Cow::Borrowed("Alice"), 1000..=1002, |car| {
+        replica.for_range2("Alice", 1000..=1002, |car| {
             io2.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
         assert_eq!(io2, Vec::<String>::new());
@@ -512,13 +527,81 @@ mod tests {
         });
         assert_eq!(io3, vec!["Bob 456 def", "Bob 888 def"]);
         let mut io4 = vec![];
-        replica.for_range2(Cow::Borrowed("Charlie"), 1000..1003, |car| {
+        replica.for_range2("Charlie", 1000..1003, |car| {
             io4.push(format!("{} {} {}", car.owner, car.license_plate, car.key));
         });
         assert_eq!(
             io4,
             vec!["Charlie 1000 ghi", "Charlie 1001 ghi", "Charlie 1002 ghi"]
         );
+    }
+
+    /// Unbounded range dimensions must clamp to the fixed prefix;
+    /// previously `for_range2(x0, .., f)` iterated the entire map.
+    #[test]
+    fn test_for_range_unbounded_clamps_to_prefix() {
+        let replica: BTreeMapReplica<Car, 2> = BTreeMapReplica::new();
+        replica.insert_for_test(Car::new("Alice", 123, "abc"));
+        replica.insert_for_test(Car::new("Bob", 456, "def"));
+        replica.insert_for_test(Car::new("Charlie", 1000, "ghi"));
+        replica.insert_for_test(Car::new("Charlie", 1001, "ghi"));
+        let mut io = vec![];
+        replica.for_range2("Charlie", .., |car| {
+            io.push(car.license_plate);
+        });
+        assert_eq!(io, vec![1000, 1001]);
+        let mut io = vec![];
+        replica.for_range2("Charlie", 1001.., |car| {
+            io.push(car.license_plate);
+        });
+        assert_eq!(io, vec![1001]);
+        let mut io = vec![];
+        replica.for_range2("Charlie", ..1001, |car| {
+            io.push(car.license_plate);
+        });
+        assert_eq!(io, vec![1000]);
+        let mut io = vec![];
+        replica.for_range2("Charlie", ..=1001, |car| {
+            io.push(car.license_plate);
+        });
+        assert_eq!(io, vec![1000, 1001]);
+    }
+
+    /// Exclusive bounds on a non-final index dimension must exclude all
+    /// rows sharing the boundary value; previously the trailing
+    /// sentinels were wrong and boundary rows leaked into the result.
+    #[test]
+    fn test_for_range_excluded_bounds_nonfinal_dim() {
+        use std::ops::Bound;
+
+        let replica: BTreeMapReplica<Car, 2> = BTreeMapReplica::new();
+        replica.insert_for_test(Car::new("Alice", 123, "abc"));
+        replica.insert_for_test(Car::new("Bob", 456, "def"));
+        replica.insert_for_test(Car::new("Bob", 888, "def"));
+        replica.insert_for_test(Car::new("Charlie", 1000, "ghi"));
+        // half-open range: Charlie rows excluded
+        let mut io = vec![];
+        replica.for_range1("Alice".."Charlie", |car| {
+            io.push(format!("{} {}", car.owner, car.license_plate));
+        });
+        assert_eq!(io, vec!["Alice 123", "Bob 456", "Bob 888"]);
+        // explicit Bound pair with excluded start: all Alice rows skipped
+        let mut io = vec![];
+        replica.for_range1((Bound::Excluded("Alice"), Bound::Unbounded), |car| {
+            io.push(format!("{} {}", car.owner, car.license_plate));
+        });
+        assert_eq!(io, vec!["Bob 456", "Bob 888", "Charlie 1000"]);
+        // RangeFrom / RangeTo
+        let mut io = vec![];
+        replica.for_range1("Bob".., |car| {
+            io.push(format!("{} {}", car.owner, car.license_plate));
+        });
+        assert_eq!(io, vec!["Bob 456", "Bob 888", "Charlie 1000"]);
+        let mut io = vec![];
+        replica.for_range1(.."Bob", |car| {
+            io.push(format!("{} {}", car.owner, car.license_plate));
+        });
+        assert_eq!(io, vec!["Alice 123"]);
     }
 
     #[derive(Debug, Clone, BTreeMapped)]
