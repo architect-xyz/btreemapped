@@ -3,7 +3,10 @@ use etl::{
     error::EtlResult,
     types::{Event, TableRow, TableSchema},
 };
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 pub struct BTreeMapSink<T: BTreeMapped<N>, const N: usize> {
     pub replica: BTreeMapReplica<T, N>,
@@ -20,6 +23,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapSink<T, N> {
 fn parse_row<T: BTreeMapped<N>, const N: usize>(
     schema: &TableSchema,
     row: TableRow,
+    dropped_rows: &AtomicU64,
 ) -> Option<T> {
     match T::parse_row(schema, row) {
         Ok(t) => Some(t),
@@ -27,6 +31,7 @@ fn parse_row<T: BTreeMapped<N>, const N: usize>(
         Err(_e) => {
             #[cfg(feature = "log")]
             log::error!("parse_row returned error: {_e:?}");
+            dropped_rows.fetch_add(1, Ordering::Relaxed);
             None
         }
     }
@@ -35,12 +40,14 @@ fn parse_row<T: BTreeMapped<N>, const N: usize>(
 fn parse_row_index<T: BTreeMapped<N>, const N: usize>(
     schema: &TableSchema,
     row: TableRow,
+    dropped_rows: &AtomicU64,
 ) -> Option<T::Index> {
     match T::parse_row_index(schema, row) {
         Ok(index) => Some(index),
         Err(_e) => {
             #[cfg(feature = "log")]
             log::error!("parse_row returned error: {_e:?}");
+            dropped_rows.fetch_add(1, Ordering::Relaxed);
             None
         }
     }
@@ -48,11 +55,23 @@ fn parse_row_index<T: BTreeMapped<N>, const N: usize>(
 
 pub(crate) trait ErasedBTreeMapReplica: Send {
     fn to_sink(&self, table_schema: Arc<TableSchema>) -> Box<dyn ErasedBTreeMapSink>;
+
+    fn rows(&self) -> usize;
+
+    fn dropped_rows(&self) -> u64;
 }
 
 impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapReplica for BTreeMapReplica<T, N> {
     fn to_sink(&self, table_schema: Arc<TableSchema>) -> Box<dyn ErasedBTreeMapSink> {
         Box::new(BTreeMapSink::new(self.clone(), table_schema))
+    }
+
+    fn rows(&self) -> usize {
+        self.read().len()
+    }
+
+    fn dropped_rows(&self) -> u64 {
+        self.dropped_rows.load(Ordering::Relaxed)
     }
 }
 
@@ -127,7 +146,9 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
         let (seqid, seqno) = {
             let mut replica = self.replica.write();
             for row in rows {
-                if let Some(t) = parse_row::<T, N>(&self.table_schema, row) {
+                if let Some(t) =
+                    parse_row::<T, N>(&self.table_schema, row, &self.replica.dropped_rows)
+                {
                     let index = t.index();
                     replica.insert(index.clone().into(), t.clone());
                     updates.push((index, Some(t)));
@@ -153,23 +174,33 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
             Event::Begin(..) => {}
             Event::Commit(..) => {}
             Event::Insert(insert) => {
-                if let Some(t) = parse_row::<T, N>(&self.table_schema, insert.table_row) {
+                if let Some(t) = parse_row::<T, N>(
+                    &self.table_schema,
+                    insert.table_row,
+                    &self.replica.dropped_rows,
+                ) {
                     self.txn_clog.push(Ok(t));
                 }
             }
             Event::Update(update) => {
                 let mut index = Ok(None);
                 if let Some((_, key)) = update.old_table_row {
-                    if let Some(i) = parse_row_index::<T, N>(&self.table_schema, key) {
+                    if let Some(i) = parse_row_index::<T, N>(
+                        &self.table_schema,
+                        key,
+                        &self.replica.dropped_rows,
+                    ) {
                         index = Ok(Some(i));
                     } else {
                         index = Err(());
                     }
                 }
                 if let Ok(index) = index {
-                    if let Some(t) =
-                        parse_row::<T, N>(&self.table_schema, update.table_row)
-                    {
+                    if let Some(t) = parse_row::<T, N>(
+                        &self.table_schema,
+                        update.table_row,
+                        &self.replica.dropped_rows,
+                    ) {
                         if let Some(i) = index {
                             self.txn_clog.push(Err(i));
                         }
@@ -180,7 +211,11 @@ impl<T: BTreeMapped<N>, const N: usize> ErasedBTreeMapSink for BTreeMapSink<T, N
             Event::Delete(delete) => {
                 // CR alee: under what conditions is old_table_row not Some(..)?
                 if let Some((_, key)) = delete.old_table_row {
-                    if let Some(i) = parse_row_index::<T, N>(&self.table_schema, key) {
+                    if let Some(i) = parse_row_index::<T, N>(
+                        &self.table_schema,
+                        key,
+                        &self.replica.dropped_rows,
+                    ) {
                         self.txn_clog.push(Err(i));
                     }
                 }

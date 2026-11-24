@@ -18,7 +18,7 @@ pub use lvalue::*;
 pub use replica::{
     BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
 };
-pub use replicator::BTreeMapReplicator;
+pub use replicator::{BTreeMapReplicator, ReplicaPhase, ReplicaStatus};
 
 pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     type LIndex: HasArity<N>

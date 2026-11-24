@@ -8,7 +8,7 @@ use etl::{
     error::{ErrorKind, EtlError, EtlResult},
     etl_error,
     pipeline::Pipeline,
-    state::table::TableReplicationPhase,
+    state::table::{RetryPolicy, TableReplicationPhase},
     store::{cleanup::CleanupStore, schema::SchemaStore, state::StateStore},
     types::{Event, TableName, TableRow},
 };
@@ -19,11 +19,53 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{futures::OwnedNotified, Notify};
 use tokio_util::sync::CancellationToken;
 
+struct Replica {
+    table: String,
+    columns: &'static [&'static str],
+    handle: Box<dyn ErasedBTreeMapReplica>,
+}
+
+/// Where the replica of one table is in its life.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplicaPhase {
+    /// The first copy of the table is not done, or a failed table waits for
+    /// a timed retry.
+    Syncing,
+    /// The replica follows the table.
+    Ready,
+    /// The pipeline stopped applying changes to the table. Only a restart
+    /// resumes it.
+    Errored(String),
+    /// Every table of the publication finished its first copy, and this
+    /// table was not one of them.
+    NotPublished,
+}
+
+/// The state of one table given to `add_replica`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicaStatus {
+    pub table: String,
+    pub phase: ReplicaPhase,
+    pub rows: usize,
+    /// Rows and changes that did not parse and were not applied.
+    pub dropped_rows: u64,
+}
+
+fn is_settled(phase: &TableReplicationPhase) -> bool {
+    match phase {
+        TableReplicationPhase::SyncDone { .. } | TableReplicationPhase::Ready => true,
+        TableReplicationPhase::Errored { retry_policy, .. } => {
+            !matches!(retry_policy, RetryPolicy::TimedRetry { .. })
+        }
+        _ => false,
+    }
+}
+
 /// Inner state of [`BTreeMapReplicator`]
 struct Inner {
     sinks: HashMap<TableId, Box<dyn ErasedBTreeMapSink>>,
     pending_sinks: HashMap<String, Box<dyn ErasedBTreeMapReplica>>,
-    replicas: Vec<(String, &'static [&'static str])>,
+    replicas: Vec<Replica>,
     committed_lsn: u64,
     txn_lsn: Option<u64>,
     fully_synced: bool,
@@ -87,14 +129,55 @@ impl BTreeMapReplicator {
         let mut inner = self.inner.lock();
         let replica = BTreeMapReplica::new();
         inner.pending_sinks.insert(table_name.to_string(), Box::new(replica.clone()));
-        inner.replicas.push((table_name.to_string(), T::COLUMNS));
+        inner.replicas.push(Replica {
+            table: table_name.to_string(),
+            columns: T::COLUMNS,
+            handle: Box::new(replica.clone()),
+        });
         replica
     }
 
     /// Each table given to `add_replica`, with the columns that its struct
     /// reads. Use this to check that a publication carries those columns.
     pub fn replicas(&self) -> Vec<(String, &'static [&'static str])> {
-        self.inner.lock().replicas.clone()
+        let inner = self.inner.lock();
+        inner.replicas.iter().map(|r| (r.table.clone(), r.columns)).collect()
+    }
+
+    /// The state of each table given to `add_replica`.
+    pub fn status(&self) -> Vec<ReplicaStatus> {
+        let inner = self.inner.lock();
+        let states = &inner.table_replication_states;
+        let all_settled = !states.is_empty() && states.values().all(is_settled);
+        inner
+            .replicas
+            .iter()
+            .map(|replica| {
+                let state = inner
+                    .table_schemas
+                    .values()
+                    .find(|schema| normalized_table_name(&schema.name) == replica.table)
+                    .map(|schema| states.get(&schema.id));
+                let phase =
+                    match state {
+                        None if all_settled => ReplicaPhase::NotPublished,
+                        Some(Some(
+                            TableReplicationPhase::SyncDone { .. }
+                            | TableReplicationPhase::Ready,
+                        )) => ReplicaPhase::Ready,
+                        Some(Some(
+                            phase @ TableReplicationPhase::Errored { reason, .. },
+                        )) if is_settled(phase) => ReplicaPhase::Errored(reason.clone()),
+                        _ => ReplicaPhase::Syncing,
+                    };
+                ReplicaStatus {
+                    table: replica.table.clone(),
+                    phase,
+                    rows: replica.handle.rows(),
+                    dropped_rows: replica.handle.dropped_rows(),
+                }
+            })
+            .collect()
     }
 
     pub fn synced(&self) -> OwnedNotified {

@@ -7,7 +7,10 @@ use btreemapped_derive::impl_for_range;
 use futures::Stream;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{atomic::AtomicU64, Arc},
+};
 use thiserror::Error;
 use tokio::sync::{broadcast, watch};
 
@@ -91,6 +94,7 @@ pub struct BTreeMapReplica<T: BTreeMapped<N>, const N: usize> {
     // The use case for writable replicas is for testing or as a convenience
     // for local dev where you don't want to run a Postgres, e.g.
     read_only_replica: bool,
+    pub(crate) dropped_rows: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Error)]
@@ -121,6 +125,7 @@ impl<T: BTreeMapped<N>, const N: usize> BTreeMapReplica<T, N> {
             sequence: changed,
             updates,
             read_only_replica: true,
+            dropped_rows: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -396,6 +401,7 @@ impl_for_range!(LIndex4<I0, I1, I2, I3>);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sink::ErasedBTreeMapReplica;
     use btreemapped_derive::BTreeMapped;
     use chrono::{DateTime, Utc};
     use std::borrow::Cow;
@@ -411,6 +417,76 @@ mod tests {
         fn new(key: &str, bar: Option<DateTime<Utc>>) -> Self {
             Self { key: key.to_string(), bar }
         }
+    }
+
+    #[test]
+    fn test_status() {
+        use crate::{BTreeMapReplicator, ReplicaPhase};
+        use etl::{
+            state::table::{RetryPolicy, TableReplicationPhase},
+            store::{schema::SchemaStore, state::StateStore},
+            types::{Cell, PgLsn, TableRow, Type},
+        };
+        use etl_postgres::types::{ColumnSchema, TableId, TableName, TableSchema};
+        use futures::executor::block_on;
+
+        let schema = |id: u32, name: &str| {
+            TableSchema::new(
+                TableId::new(id),
+                TableName::new("public".to_string(), name.to_string()),
+                vec![
+                    ColumnSchema::new("key".to_string(), Type::TEXT, -1, false, true),
+                    ColumnSchema::new(
+                        "bar".to_string(),
+                        Type::TIMESTAMPTZ,
+                        -1,
+                        true,
+                        false,
+                    ),
+                ],
+            )
+        };
+        let replicator = BTreeMapReplicator::new();
+        let foos = replicator.add_replica::<Foo, 1>("foos");
+        let _bars = replicator.add_replica::<Foo, 1>("bars");
+        let phases = || -> Vec<ReplicaPhase> {
+            replicator.status().into_iter().map(|s| s.phase).collect()
+        };
+        assert_eq!(phases(), [ReplicaPhase::Syncing, ReplicaPhase::Syncing]);
+
+        let set = |id: u32, phase: TableReplicationPhase| {
+            block_on(replicator.update_table_replication_state(TableId::new(id), phase))
+                .unwrap()
+        };
+        block_on(replicator.store_table_schema(schema(1, "foos"))).unwrap();
+        set(1, TableReplicationPhase::DataSync);
+        assert_eq!(phases(), [ReplicaPhase::Syncing, ReplicaPhase::Syncing]);
+
+        set(1, TableReplicationPhase::SyncDone { lsn: PgLsn::from(0) });
+        assert_eq!(phases(), [ReplicaPhase::Ready, ReplicaPhase::NotPublished]);
+
+        let errored = |retry_policy| TableReplicationPhase::Errored {
+            reason: "schema changed".to_string(),
+            solution: None,
+            retry_policy,
+        };
+        set(1, errored(RetryPolicy::retry_in(chrono::Duration::seconds(1))));
+        assert_eq!(phases(), [ReplicaPhase::Syncing, ReplicaPhase::Syncing]);
+        set(1, errored(RetryPolicy::NoRetry));
+        assert_eq!(
+            phases(),
+            [
+                ReplicaPhase::Errored("schema changed".to_string()),
+                ReplicaPhase::NotPublished
+            ]
+        );
+
+        let sink = ErasedBTreeMapReplica::to_sink(&foos, Arc::new(schema(1, "foos")));
+        let row = |key| TableRow::new(vec![key, Cell::Null]);
+        sink.write_table_rows(vec![row(Cell::String("a".to_string())), row(Cell::Null)])
+            .unwrap();
+        let foos_status = &replicator.status()[0];
+        assert_eq!((foos_status.rows, foos_status.dropped_rows), (1, 1));
     }
 
     #[test]
