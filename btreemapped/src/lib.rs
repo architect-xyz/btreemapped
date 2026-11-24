@@ -41,6 +41,9 @@ pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
         + Sync
         + 'static;
 
+    /// The names of the columns that `parse_row` reads, one for each field.
+    const COLUMNS: &'static [&'static str];
+
     /// Build the index value for this struct.
     fn index(&self) -> Self::Index;
 

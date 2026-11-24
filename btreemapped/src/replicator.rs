@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 struct Inner {
     sinks: HashMap<TableId, Box<dyn ErasedBTreeMapSink>>,
     pending_sinks: HashMap<String, Box<dyn ErasedBTreeMapReplica>>,
+    replicas: Vec<(String, &'static [&'static str])>,
     committed_lsn: u64,
     txn_lsn: Option<u64>,
     fully_synced: bool,
@@ -66,6 +67,7 @@ impl BTreeMapReplicator {
         let inner = Inner {
             sinks: HashMap::new(),
             pending_sinks: HashMap::new(),
+            replicas: vec![],
             committed_lsn: 0,
             txn_lsn: None,
             fully_synced: false,
@@ -85,7 +87,14 @@ impl BTreeMapReplicator {
         let mut inner = self.inner.lock();
         let replica = BTreeMapReplica::new();
         inner.pending_sinks.insert(table_name.to_string(), Box::new(replica.clone()));
+        inner.replicas.push((table_name.to_string(), T::COLUMNS));
         replica
+    }
+
+    /// Each table given to `add_replica`, with the columns that its struct
+    /// reads. Use this to check that a publication carries those columns.
+    pub fn replicas(&self) -> Vec<(String, &'static [&'static str])> {
+        self.inner.lock().replicas.clone()
     }
 
     pub fn synced(&self) -> OwnedNotified {

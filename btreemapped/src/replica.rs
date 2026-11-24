@@ -414,6 +414,14 @@ mod tests {
     }
 
     #[test]
+    fn test_columns() {
+        assert_eq!(Foo::COLUMNS, ["key", "bar"]);
+        let replicator = crate::BTreeMapReplicator::new();
+        let _foos = replicator.add_replica::<Foo, 1>("foos");
+        assert_eq!(replicator.replicas(), [("foos".to_string(), Foo::COLUMNS)]);
+    }
+
+    #[test]
     fn test_btreemap_replica1() {
         let replica: BTreeMapReplica<Foo, 1> = BTreeMapReplica::new();
         replica.insert_for_test(Foo::new("abc", None));
