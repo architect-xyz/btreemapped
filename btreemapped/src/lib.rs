@@ -18,7 +18,7 @@ pub use lvalue::*;
 pub use replica::{
     BTreeMapReplica, BTreeMapSyncError, BTreeSnapshot, BTreeUpdate, BTreeWrite,
 };
-pub use replicator::BTreeMapReplicator;
+pub use replicator::{BTreeMapReplicator, ReplicaPhase, ReplicaStatus};
 
 pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
     type LIndex: HasArity<N>
@@ -40,6 +40,9 @@ pub trait BTreeMapped<const N: usize>: Clone + Send + Sync + 'static {
         + Send
         + Sync
         + 'static;
+
+    /// The names of the columns that `parse_row` reads, one for each field.
+    const COLUMNS: &'static [&'static str];
 
     /// Build the index value for this struct.
     fn index(&self) -> Self::Index;

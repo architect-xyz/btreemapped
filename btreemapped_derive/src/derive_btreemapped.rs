@@ -152,6 +152,9 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
         parse_row_unindexed_var_decls.push(quote! { let mut #name: Option<#ty> = None; });
     }
 
+    let column_names: Vec<String> =
+        all_fields.iter().map(|(name, _)| name.to_string()).collect();
+
     let mut parse_row_index_match_arms = vec![];
     let mut parse_row_unindexed_match_arms = vec![];
     for (name, ty) in &all_fields {
@@ -325,6 +328,8 @@ pub fn derive_btreemapped(input: TokenStream) -> TokenStream {
         impl BTreeMapped<#index_arity> for #struct_name {
             type LIndex = #lindex_type;
             type Index = #index_tuple;
+
+            const COLUMNS: &'static [&'static str] = &[#(#column_names),*];
 
             fn index(&self) -> Self::Index {
                 #index_tuple_ctor
